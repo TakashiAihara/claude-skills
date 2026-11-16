@@ -38,7 +38,8 @@ await new Promise((ready, reject) => {
   ws.onerror = () => reject(new Error("could not open the DevTools connection"));
   ws.onclose = () => reject(new Error("the DevTools connection closed while opening"));
 });
-// A reply that never comes would hang the run with no verdict, so a closed connection is "nothing was checked".
+// A closed connection leaves every pending reply unanswered, so it is "nothing was checked" (an open one that stops
+// answering is cut by the 5-minute limit above).
 let finished = false;
 ws.onclose = () => {
   if (!finished) fail("the DevTools connection closed");
@@ -194,7 +195,8 @@ const back = (await evaluate(`[...document.querySelectorAll('.slide')].findIndex
   s.querySelector('ol.steps') && document.querySelectorAll('.slide')[i - 1].querySelector('ol.steps'))`)) as number;
 if (back > 0) {
   // back is 0-based, so dot [back] opens slide back + 1 (1-based) and ← should land on slide back with every step out.
-  // The dot does nothing for the slide already shown, which back is when the pair ends the deck; leave it first.
+  // A dot click is a no-op on the slide already shown, and slide back is shown when the pair ends the deck, so go Home
+  // first (back > 0, so Home is another slide).
   await press("Home");
   await evaluate(`document.querySelectorAll('.deck-dot')[${back}].click(); true`);
   const shown = await screen("ArrowLeft");
