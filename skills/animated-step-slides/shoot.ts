@@ -106,7 +106,9 @@ try {
   const loaded = await evaluate(`new Promise((done) => {
     document.fonts.ready.then(() => {
           const family = getComputedStyle(document.body).fontFamily.split(',')[0].trim().replace(/['"]/g, '');
-          const loaded = [...document.fonts].some((face) => face.family.replace(/['"]/g, '') === family && face.status === 'loaded');
+          const faces = [...document.fonts].filter((face) => face.family.replace(/['"]/g, '') === family);
+          // A deck on system fonts has no face and no stylesheet; a face missing while a stylesheet is linked means it did not arrive.
+          const loaded = faces.some((face) => face.status === 'loaded') || (!faces.length && !document.querySelector('link[rel="stylesheet"]'));
           // Every other web font the slides use (a family with declared faces) must have loaded a face too.
           const used = new Set([...document.querySelectorAll('.slide, .slide *')].map((el) =>
             getComputedStyle(el).fontFamily.split(',')[0].trim().replace(/['"]/g, '')));

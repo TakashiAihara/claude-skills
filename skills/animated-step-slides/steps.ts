@@ -2,8 +2,9 @@
 // one marked now, at least one node is lit), every node a step or a link names must exist on its stage, every hop of a
 // step's path must be a drawn link, no script error may fire, and the presses must add up to slides - 1 + steps.
 // At each step the lit nodes and lines must be exactly the step's path, the lines before it done, and a path step
-// must send its dots (data-repeat of them). Then, for the first pair of step slides side by side, presses ← from the
-// later one's start to check that coming back fills the earlier one.
+// must send its dots (data-repeat of them); entering a slide must show nothing lit. One more → at the end must stay
+// put. Then, for the first pair of step slides side by side, presses ← from the later one's start to check that coming
+// back fills the earlier one, and ← once more to check it takes back one step. Wheel, swipe and buttons are not driven.
 // Chrome as for shoot.ts.
 // Usage: bun <skill dir>/steps.ts <port> <deck.html>
 // Exit: 0 = every step plays / 1 = something above is off / 2 = nothing was checked (Chrome or the page failed).
@@ -79,18 +80,22 @@ while (
 }
 
 const problems = (await evaluate(`[...document.querySelectorAll('.slide')].flatMap((s, i) => {
-  const st = s.querySelector('.stage'); if (!st) return [];
+  const st = s.querySelector('.stage');
   const at = 'slide ' + (i + 1) + ': ';
+  if (!st) return s.querySelector('ol.steps li') ? [at + 'steps without a stage'] : [];
   if (!st.dataset.links) return [at + 'stage without data-links'];
   const all = [...st.querySelectorAll('[data-node]')].map((n) => n.dataset.node);
   const names = new Set(all);
   const out = all.filter((n, k) => all.indexOf(n) !== k).map((n) => at + 'duplicate node ' + n);
   const links = st.dataset.links.split(/\\s+/).filter(Boolean).map((p) => p.split('>'));
   const drawn = new Set(links.map((p) => p.slice().sort().join('|')));
+  links.filter((p) => p.length !== 2).forEach((p) => out.push(at + 'link ' + p.join('>') + ' must join exactly two nodes'));
   links.flat().filter((n) => !names.has(n)).forEach((n) => out.push(at + 'link to missing node ' + n));
   s.querySelectorAll('ol.steps li').forEach((li, k) => {
     const path = (li.dataset.path || li.dataset.light || '').split('>').filter(Boolean);
     if (!path.length) out.push(at + 'step ' + (k + 1) + ' has no path or light');
+    // A one-node path has no hop, so its dot would have nowhere to travel.
+    if (li.dataset.path && path.length < 2) out.push(at + 'step ' + (k + 1) + ' has a path of one node; use data-light');
     path.filter((n) => !names.has(n)).forEach((n) => out.push(at + 'step ' + (k + 1) + ' names missing node ' + n));
     if (li.dataset.path) path.slice(1).forEach((n, h) => {
       if (!drawn.has([path[h], n].sort().join('|'))) out.push(at + 'step ' + (k + 1) + ' hops ' + path[h] + '>' + n + ' with no link');
@@ -100,7 +105,7 @@ const problems = (await evaluate(`[...document.querySelectorAll('.slide')].flatM
 })`)) as string[];
 
 const total = Number(await evaluate("document.querySelectorAll('.slide').length"));
-const steps = Number(await evaluate("document.querySelectorAll('ol.steps li').length"));
+const steps = Number(await evaluate("document.querySelectorAll('.slide ol.steps li').length"));
 const expected = total - 1 + steps;
 const press = (key: string) =>
   evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '${key}' })); true`);
@@ -139,6 +144,9 @@ const screen = async (key = "") =>
     done: number;
     lightOk: boolean;
     packetsOk: boolean;
+    litNodes: string;
+    litLines: string;
+    packets: number;
   };
 
 await press("Home");
@@ -150,7 +158,9 @@ while (presses <= expected) {
   if (
     shown.slide !== expectSlide ||
     shown.now !== expectStep ||
-    (expectStep > 0 && (shown.nowCount !== 1 || shown.done !== expectStep - 1 || !shown.lightOk || !shown.packetsOk))
+    (expectStep > 0 && (shown.nowCount !== 1 || shown.done !== expectStep - 1 || !shown.lightOk || !shown.packetsOk)) ||
+    // Entering a slide shows none of its steps: nothing lit and no dot left over.
+    (expectStep === 0 && (shown.litNodes !== "" || shown.litLines !== "" || shown.packets !== 0))
   ) {
     problems.push(
       `after ${presses} presses: expected slide ${expectSlide} step ${expectStep}, screen shows ${JSON.stringify(shown)}`,
@@ -168,6 +178,9 @@ while (presses <= expected) {
   }
 }
 if (presses !== expected) problems.push(`${presses} presses reached the end, expected ${expected}`);
+// → at the very end stays put.
+const end = await screen("ArrowRight");
+if (end.slide !== total || end.now !== end.steps) problems.push(`→ past the end shows ${JSON.stringify(end)}`);
 
 // Back from the first step of a step slide goes to the previous slide with all its steps out.
 const back = (await evaluate(`[...document.querySelectorAll('.slide')].findIndex((s, i) => i > 0 &&
@@ -178,6 +191,10 @@ if (back > 0) {
   const shown = await screen("ArrowLeft");
   if (shown.slide !== back || shown.now !== shown.steps || shown.done !== shown.steps - 1 || !shown.lightOk)
     problems.push(`← into slide ${back} shows ${JSON.stringify(shown)}, expected all steps out`);
+  // ← inside a slide takes back one step and stays on the slide.
+  const inside = await screen("ArrowLeft");
+  if (inside.slide !== back || inside.now !== shown.steps - 1)
+    problems.push(`← inside slide ${back} shows ${JSON.stringify(inside)}, expected step ${shown.steps - 1}`);
 } else problems.push("no two step slides side by side, so coming back was not checked");
 
 const errors = (await evaluate("window.__errors")) as string[];
