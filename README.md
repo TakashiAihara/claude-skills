@@ -8,7 +8,7 @@ General-purpose Claude Code skills, published as the `skills` plugin of the `tak
 
 ## Install
 
-As a Claude Code plugin (skills are called as `skills:<name>`):
+As a Claude Code plugin (the skills are listed as `skills:<name>`, e.g. `skills:animated-step-slides`):
 
 ```bash
 claude plugin marketplace add TakashiAihara/claude-skills

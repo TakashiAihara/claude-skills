@@ -80,12 +80,13 @@
   td:first-child { font-family: var(--font-mono); white-space: nowrap; }
 
   /* Small facts: chips for a list of names, tags for a state, a row of boxes with arrows for an overview. */
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-  .chips span { font-family: var(--font-mono); font-size: clamp(11px, 1.15vw, 13px); padding: 2px 8px; border-radius: 4px; background: var(--surface2); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips span { font-family: var(--font-mono); font-size: clamp(11px, 1.15vw, 13px); padding: 2px 8px; border-radius: 4px; background: var(--surface2); overflow-wrap: anywhere; }
   .tag { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-dim); color: var(--accent); }
   .tag--off { background: var(--surface2); color: var(--text-dim); }
-  .pipe { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
-  .pipe .box { flex: 1 1 160px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  /* One row that never wraps, so no arrow is left pointing at the next line; narrow screens stack it instead. */
+  .pipe { display: flex; align-items: stretch; gap: 0; }
+  .pipe .box { flex: 1 1 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; overflow-wrap: anywhere; }
   .pipe .box b { display: block; font-size: clamp(15px, 1.6vw, 19px); margin-bottom: 6px; }
   .pipe .box p { font-size: clamp(12px, 1.3vw, 15px); color: var(--text-dim); line-height: 1.5; }
   .pipe .arrow { flex: 0 0 34px; display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 22px; }
@@ -140,6 +141,7 @@
     .stepped { grid-template-columns: 1fr; }
     .node { min-width: 0; padding: 5px 7px; font-size: 11px; }
     .split { grid-template-columns: 1fr; }
+    .pipe { flex-direction: column; gap: 8px; }
     .pipe .arrow { display: none; }
     .slide { justify-content: flex-start; overflow-y: auto; }
 
