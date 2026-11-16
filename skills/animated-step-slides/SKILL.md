@@ -1,13 +1,14 @@
 ---
 name: animated-step-slides
-description: "Make a single-file HTML slide deck where each press of → moves a diagram one step - a dot travels along a path of nodes and the nodes and lines it passes light up - and slides switch instantly with no transition. Use it to explain how something flows (requests, data pipelines, jobs, protocols) one hop at a time. Comes with a template and two checkers (every slide fits the screen, every step plays). Trigger: animated slides, step slides, slides where the diagram moves, explain the flow step by step, 1 手ずつ動くスライド, アニメーションスライド."
+description: "Make a single-file HTML slide deck where each press of → moves a diagram one step - a dot travels along a path of nodes and the nodes and lines it passes light up - and slides switch instantly with no transition. Use it to write a spec document that explains how a system works (requests, data pipelines, jobs, protocols) one hop at a time. Comes with a template and two checkers (every slide fits the screen, every step plays). Trigger: animated slides, step slides, slides where the diagram moves, explain the flow step by step, 1 手ずつ動くスライド, アニメーションスライド."
 ---
 
 # animated-step-slides
 
 ## Output
 
-- One `.html` file. The only external dependency is Google Fonts; opening it in a browser is enough
+- One `.html` file: a spec document for people who need to understand how the system works, kept with the project's docs (e.g. `docs/slides/`). It is not a screen inside the product; the product's own UI serves a different reader
+- The only external dependency is Google Fonts; opening it in a browser is enough
 - Each slide is one hand-written `<section class="slide">` and each step is one `<li>`, so a git diff shows what changed. Do not render slides from data with JS
 - Nothing advances by itself. → (also ↓ Space PageDown, the wheel, a swipe, the button at the bottom right) shows the next step; when a slide's steps run out it goes to the next slide. ← goes back one step. The dots on the right and Home / End jump to a slide
 - Only the diagram moves. Slides switch instantly: a sliding transition costs the reader attention, while a deck with no motion at all is just slides. With `prefers-reduced-motion` the dots are not sent but lighting still follows the steps
