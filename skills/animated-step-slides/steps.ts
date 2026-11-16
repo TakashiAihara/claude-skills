@@ -36,7 +36,13 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((ready, reject) => {
   ws.onopen = ready;
   ws.onerror = () => reject(new Error("could not open the DevTools connection"));
+  ws.onclose = () => reject(new Error("the DevTools connection closed while opening"));
 });
+// A reply that never comes would hang the run with no verdict, so a closed connection is "nothing was checked".
+let finished = false;
+ws.onclose = () => {
+  if (!finished) fail("the DevTools connection closed");
+};
 
 type Reply = { result?: { value?: unknown }; exceptionDetails?: unknown };
 let lastId = 0;
@@ -188,6 +194,8 @@ const back = (await evaluate(`[...document.querySelectorAll('.slide')].findIndex
   s.querySelector('ol.steps') && document.querySelectorAll('.slide')[i - 1].querySelector('ol.steps'))`)) as number;
 if (back > 0) {
   // back is 0-based, so dot [back] opens slide back + 1 (1-based) and ← should land on slide back with every step out.
+  // The dot does nothing for the slide already shown, which back is when the pair ends the deck; leave it first.
+  await press("Home");
   await evaluate(`document.querySelectorAll('.deck-dot')[${back}].click(); true`);
   const shown = await screen("ArrowLeft");
   if (shown.slide !== back || shown.now !== shown.steps || shown.done !== shown.steps - 1 || !shown.lightOk)
@@ -201,5 +209,6 @@ if (back > 0) {
 const errors = (await evaluate("window.__errors")) as string[];
 problems.push(...errors.map((e) => `script error: ${e}`));
 console.log(JSON.stringify({ presses, expected, problems }));
+finished = true;
 await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined);
 process.exit(problems.length ? 1 : 0);
