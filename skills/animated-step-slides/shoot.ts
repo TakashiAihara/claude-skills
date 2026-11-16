@@ -95,7 +95,7 @@ try {
   await send("Page.enable");
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source:
-      "window.__sheetErrors = []; addEventListener('error', (e) => { if (e.target instanceof HTMLLinkElement) window.__sheetErrors.push(e.target.href); }, true);",
+      "window.__sheetErrors = []; addEventListener('error', (e) => { if (e.target instanceof HTMLLinkElement && e.target.rel === 'stylesheet') window.__sheetErrors.push(e.target.href); }, true);",
   });
   await send("Page.reload");
   // Page.reload returns before the new document commits, so wait for the deck's own URL to finish loading. Web fonts

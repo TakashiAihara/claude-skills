@@ -38,8 +38,8 @@ description: "Make a single-file HTML slide deck where each press of → moves a
 export SP=$(mktemp -d) PORT=9333
 # in the background (on macOS the binary is "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 google-chrome --headless=new --no-sandbox --remote-debugging-port="$PORT" --user-data-dir="$SP/chrome" about:blank &
-for i in $(seq 50); do curl -sf "http://127.0.0.1:$PORT/json/version" >/dev/null && break; sleep 0.2; done
-SKILL="$HOME/.claude/skills/animated-step-slides"  # the directory holding this SKILL.md
+for i in $(seq 50); do curl -sf -m 1 "http://127.0.0.1:$PORT/json/version" >/dev/null && break; sleep 0.2; done
+SKILL=/path/to/animated-step-slides  # set to the directory holding this SKILL.md
 bun "$SKILL/shoot.ts" "$PORT" deck.html "$SP/shots"
 bun "$SKILL/steps.ts" "$PORT" deck.html
 ```
