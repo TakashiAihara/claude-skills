@@ -241,6 +241,8 @@
 <div class="deck-hints">→ ↓ Space wheel: one step forward / ← ↑: back / Home End</div>
 <script>
   (function () {
+    // The deck's one word the script writes; translate it with the hint line and the button labels.
+    var STEP_LABEL = 'step';
     var deck = document.querySelector('.deck');
     var slides = [].slice.call(document.querySelectorAll('.slide'));
     var current = 0;
@@ -351,7 +353,7 @@
       bar.style.width = ((current + 1) / slides.length * 100) + '%';
       dots.forEach(function (d, i) { d.classList.toggle('active', i === current); });
       var total = stepsOf(slides[current]).length;
-      counter.textContent = (current + 1) + ' / ' + slides.length + (total ? ' · step ' + shown[current] + '/' + total : '');
+      counter.textContent = (current + 1) + ' / ' + slides.length + (total ? ' · ' + STEP_LABEL + ' ' + shown[current] + '/' + total : '');
     }
     document.getElementById('prev').onclick = prev;
     document.getElementById('next').onclick = next;
