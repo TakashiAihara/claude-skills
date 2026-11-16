@@ -5,6 +5,7 @@
 // must send its dots (data-repeat of them); entering a slide must show nothing lit. One more → at the end must stay
 // put. Then, for the first pair of step slides side by side, presses ← from the later one's start to check that coming
 // back fills the earlier one, and ← once more to check it takes back one step. Wheel, swipe and buttons are not driven.
+// The deck must change slides and steps synchronously on a key press, as the template does (no smooth scroll).
 // Chrome as for shoot.ts.
 // Usage: bun <skill dir>/steps.ts <port> <deck.html>
 // Exit: 0 = every step plays / 1 = something above is off / 2 = nothing was checked (Chrome or the page failed).

@@ -107,8 +107,10 @@ try {
     document.fonts.ready.then(() => {
           const family = getComputedStyle(document.body).fontFamily.split(',')[0].trim().replace(/['"]/g, '');
           const faces = [...document.fonts].filter((face) => face.family.replace(/['"]/g, '') === family);
-          // A deck on system fonts has no face and no stylesheet; a face missing while a stylesheet is linked means it did not arrive.
-          const loaded = faces.some((face) => face.status === 'loaded') || (!faces.length && !document.querySelector('link[rel="stylesheet"]'));
+          // A body font on the system has no face; a body family that a linked stylesheet asks for but that has no face means the stylesheet did not arrive.
+          const asked = [...document.querySelectorAll('link[rel="stylesheet"]')].some((link) =>
+            decodeURIComponent(link.href).split('+').join(' ').includes('family=' + family));
+          const loaded = faces.some((face) => face.status === 'loaded') || (!faces.length && !asked);
           // Every other web font the slides use (a family with declared faces) must have loaded a face too.
           const used = new Set([...document.querySelectorAll('.slide, .slide *')].map((el) =>
             getComputedStyle(el).fontFamily.split(',')[0].trim().replace(/['"]/g, '')));
