@@ -30,7 +30,8 @@ description: "Make a single-file HTML slide deck where each press of → moves a
 - Node names in steps and links must match `data-node` exactly; `steps.ts` fails otherwise
 - Put two step slides side by side somewhere: `steps.ts` uses them to check ← (going back into the earlier one shows all its steps, and one more ← hides its last step)
 - Keep every change of slide and step synchronous on the key press: no `scroll-behavior: smooth`, smooth `scrollTo`, or transitions on slide or step state. Instant switching is the design (see Output), and `steps.ts` reads the screen right after each key
-- Other blocks the template styles: `.split` + `.card` (two columns), `ul.plain`, `table` (in `.table-scroll`), `.meta-row` (small facts under a diagram), `.slide--title` / `.slide--divider`
+- Other blocks the template styles: `.pipe` (boxes joined by arrows, for an overview), `.split` + `.card` (two columns), `ul.plain`, `table` (in `.table-scroll`), `.meta-row` (small facts under a diagram), `.chips` (a list of names such as columns), `.tag` / `.tag--off` (a state), `.slide--title` / `.slide--divider`
+- The deck's own words (the hint line, the button labels, `step` in the counter) are in English; translate them with the deck's language
 
 ## Checks
 
