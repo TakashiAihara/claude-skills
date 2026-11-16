@@ -195,7 +195,7 @@
       <div>
         <ol class="steps">
           <li data-path="browser>cdn>browser">The CDN answers from its copy</li>
-          <li data-light="app">The app and the database are not touched</li>
+          <li data-light="app>db">The app and the database are not touched</li>
         </ol>
         <p class="step-hint">→ one step forward / ← back</p>
       </div>
@@ -265,7 +265,8 @@
       var n = shown[i], now = items[n - 1], stage = slides[i].querySelector('.stage');
       items.forEach(function (li, k) { li.classList.toggle('done', k < n - 1); li.classList.toggle('now', k === n - 1); });
       var path = now ? (now.dataset.path || now.dataset.light).split('>').filter(Boolean) : [];
-      var pairs = path.slice(1).map(function (name, k) { return [path[k], name].sort().join('|'); });
+      // data-light lights nodes only, even when it names two linked ones.
+      var pairs = now && now.dataset.path ? path.slice(1).map(function (name, k) { return [path[k], name].sort().join('|'); }) : [];
       stage.querySelectorAll('.node').forEach(function (node) { node.classList.toggle('lit', path.indexOf(node.dataset.node) > -1); });
       stage.querySelectorAll('svg.links line').forEach(function (line) { line.classList.toggle('lit', pairs.indexOf(line.dataset.pair) > -1); });
       stage.querySelectorAll('.packet').forEach(function (dot) { dot.remove(); });

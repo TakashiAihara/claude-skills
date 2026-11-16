@@ -105,8 +105,11 @@ const expected = total - 1 + steps;
 const press = (key: string) =>
   evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '${key}' })); true`);
 // What the screen shows now: the slide in view, and for a step slide which line is marked now and how many nodes are lit.
-const screen = async () =>
+// The key press and the look happen in one evaluate: a short hop's dot finishes and is removed in about 400 ms, so a
+// separate round trip could miss it.
+const screen = async (key = "") =>
   (await evaluate(`(() => {
+    ${key ? `document.dispatchEvent(new KeyboardEvent('keydown', { key: '${key}' }));` : ""}
     const i = Math.round(document.querySelector('.deck').scrollTop / innerHeight);
     const s = document.querySelectorAll('.slide')[i];
     const items = [...s.querySelectorAll('ol.steps li')];
@@ -142,8 +145,8 @@ await press("Home");
 let presses = 0;
 let expectSlide = 1;
 let expectStep = 0;
+let shown = await screen();
 while (presses <= expected) {
-  const shown = await screen();
   if (
     shown.slide !== expectSlide ||
     shown.now !== expectStep ||
@@ -155,9 +158,10 @@ while (presses <= expected) {
     break;
   }
   if (shown.slide === total && expectStep === shown.steps) break;
-  await press("ArrowRight");
+  const before = shown.steps;
+  shown = await screen("ArrowRight");
   presses += 1;
-  if (expectStep < shown.steps) expectStep += 1;
+  if (expectStep < before) expectStep += 1;
   else {
     expectSlide += 1;
     expectStep = 0;
@@ -171,8 +175,7 @@ const back = (await evaluate(`[...document.querySelectorAll('.slide')].findIndex
 if (back > 0) {
   // back is 0-based, so dot [back] opens slide back + 1 (1-based) and ← should land on slide back with every step out.
   await evaluate(`document.querySelectorAll('.deck-dot')[${back}].click(); true`);
-  await press("ArrowLeft");
-  const shown = await screen();
+  const shown = await screen("ArrowLeft");
   if (shown.slide !== back || shown.now !== shown.steps || shown.done !== shown.steps - 1 || !shown.lightOk)
     problems.push(`← into slide ${back} shows ${JSON.stringify(shown)}, expected all steps out`);
 } else problems.push("no two step slides side by side, so coming back was not checked");
