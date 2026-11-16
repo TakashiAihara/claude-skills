@@ -28,8 +28,8 @@ description: "Make a single-file HTML slide deck where each press of → moves a
     - `data-repeat="5"`: send 5 dots a little apart. Use it for a step that fetches or sends many times
     - `data-light="b"` (or `"b>c"`): send no dot, just light these nodes, no lines. Use it for a step that decides or reads without moving data
 - Node names in steps and links must match `data-node` exactly; `steps.ts` fails otherwise
-- Put two step slides side by side somewhere: `steps.ts` uses them to check ← (back into the earlier one with all its steps out, then one step back inside it)
-- Keep slide changes instant; do not add `scroll-behavior: smooth`. Besides the reason above, `steps.ts` reads the screen right after each key
+- Put two step slides side by side somewhere: `steps.ts` uses them to check ← (going back into the earlier one shows all its steps, and one more ← hides its last step)
+- Keep every change of slide and step synchronous on the key press: no `scroll-behavior: smooth`, smooth `scrollTo`, or transitions on slide or step state. Instant switching is the design (see Output), and `steps.ts` reads the screen right after each key
 - Other blocks the template styles: `.split` + `.card` (two columns), `ul.plain`, `table` (in `.table-scroll`), `.meta-row` (small facts under a diagram), `.slide--title` / `.slide--divider`
 
 ## Checks
@@ -38,14 +38,14 @@ description: "Make a single-file HTML slide deck where each press of → moves a
 export SP=$(mktemp -d) PORT=9333
 # in the background (on macOS the binary is "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 google-chrome --headless=new --no-sandbox --remote-debugging-port="$PORT" --user-data-dir="$SP/chrome" about:blank &
-until curl -sf "http://127.0.0.1:$PORT/json/version" >/dev/null; do sleep 0.2; done
-# <skill dir> is the directory holding this SKILL.md
-bun <skill dir>/shoot.ts "$PORT" deck.html "$SP/shots"
-bun <skill dir>/steps.ts "$PORT" deck.html
+for i in $(seq 50); do curl -sf "http://127.0.0.1:$PORT/json/version" >/dev/null && break; sleep 0.2; done
+SKILL="$HOME/.claude/skills/animated-step-slides"  # the directory holding this SKILL.md
+bun "$SKILL/shoot.ts" "$PORT" deck.html "$SP/shots"
+bun "$SKILL/steps.ts" "$PORT" deck.html
 ```
 
 - `shoot.ts`: screenshots every slide at 1440x900 into the out dir and reports slides whose content leaves the screen or hides behind an inner scrollbar
-    - Exit 0 = every slide fits / 1 = some slide is `OVERFLOW` / 2 = nothing was measured (no `.slide`, Chrome did not answer, the body font did not load, the page did not load in 20 s). Do not read 2 as 0
+    - Exit 0 = every slide fits / 1 = some slide is `OVERFLOW` / 2 = nothing was measured (no `.slide`, Chrome did not answer, a stylesheet or a web font the slides use did not load, the page did not load in 20 s). Do not read 2 as 0
     - Control: append `1440 300` and it must exit 1
     - Run it again with `1280 720` appended (a common laptop screen); fitting at 1440x900 does not mean fitting there
     - Read the PNGs one by one for overlaps and crowding; the checker does not see an element hidden behind another, content clipped by an `overflow: hidden` box inside the slide, or which font weight loaded

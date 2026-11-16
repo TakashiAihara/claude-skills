@@ -91,6 +91,12 @@ try {
   });
   // The marker lives on the current document only, so its absence proves the reload committed a new one.
   await evaluate("window.__shootOld = true");
+  // A link's load error fires before this script could look, and a failed sheet still has a .sheet, so listen from the start.
+  await send("Page.enable");
+  await send("Page.addScriptToEvaluateOnNewDocument", {
+    source:
+      "window.__sheetErrors = []; addEventListener('error', (e) => { if (e.target instanceof HTMLLinkElement) window.__sheetErrors.push(e.target.href); }, true);",
+  });
   await send("Page.reload");
   // Page.reload returns before the new document commits, so wait for the deck's own URL to finish loading. Web fonts
   // change line breaks, and fonts.ready also settles when the font's stylesheet never arrived (no face to wait for), so
@@ -105,20 +111,16 @@ try {
   }
   const loaded = await evaluate(`new Promise((done) => {
     document.fonts.ready.then(() => {
-          const family = getComputedStyle(document.body).fontFamily.split(',')[0].trim().replace(/['"]/g, '');
-          const faces = [...document.fonts].filter((face) => face.family.replace(/['"]/g, '') === family);
-          // A body font on the system has no face; a body family that a linked stylesheet asks for but that has no face means the stylesheet did not arrive.
-          const asked = [...document.querySelectorAll('link[rel="stylesheet"]')].some((link) =>
-            decodeURIComponent(link.href).split('+').join(' ').includes('family=' + family));
-          const loaded = faces.some((face) => face.status === 'loaded') || (!faces.length && !asked);
-          // Every other web font the slides use (a family with declared faces) must have loaded a face too.
+          // A font stylesheet that never arrived declares no face, so the check below would pass on the fallback font.
+          const unloaded = window.__sheetErrors || ['(the error listener did not run)'];
+          // Every web font the slides use (a family with declared faces) must have loaded a face; a system font has none.
           const used = new Set([...document.querySelectorAll('.slide, .slide *')].map((el) =>
             getComputedStyle(el).fontFamily.split(',')[0].trim().replace(/['"]/g, '')));
           const missing = [...used].filter((name) => {
             const faces = [...document.fonts].filter((face) => face.family.replace(/['"]/g, '') === name);
             return faces.length > 0 && !faces.some((face) => face.status === 'loaded');
           });
-          done(!loaded ? 'the body font ' + family + ' did not load' : missing.length ? 'fonts did not load: ' + missing.join(', ') : 'ok');
+          done(unloaded.length ? 'stylesheets did not load: ' + unloaded.join(', ') : missing.length ? 'fonts did not load: ' + missing.join(', ') : 'ok');
     });
     setTimeout(() => done('the fonts did not finish loading in 20 s'), 20000);
   })`);
