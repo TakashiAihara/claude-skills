@@ -1,0 +1,9 @@
+{
+  "name": "skills",
+  "description": "General-purpose Claude Code skills.",
+  "author": {
+    "name": "TakashiAihara",
+    "url": "https://github.com/TakashiAihara"
+  },
+  "repository": "https://github.com/TakashiAihara/claude-skills"
+}

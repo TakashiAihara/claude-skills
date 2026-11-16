@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "takashiaihara",
+  "description": "General-purpose Claude Code skills by TakashiAihara.",
+  "owner": {
+    "name": "TakashiAihara",
+    "url": "https://github.com/TakashiAihara"
+  },
+  "plugins": [
+    {
+      "name": "skills",
+      "description": "General-purpose skills: animated step slides for spec documents.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
