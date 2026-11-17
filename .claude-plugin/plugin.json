@@ -5,5 +5,6 @@
     "name": "TakashiAihara",
     "url": "https://github.com/TakashiAihara"
   },
-  "repository": "https://github.com/TakashiAihara/claude-skills"
+  "repository": "https://github.com/TakashiAihara/claude-skills",
+  "license": "MIT"
 }
