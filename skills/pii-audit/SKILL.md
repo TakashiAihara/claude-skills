@@ -26,10 +26,10 @@ Enumerate the data stores from both the infra code (Terraform / CDK / k8s manife
 - RDB: RDS / Aurora / Cloud SQL / PostgreSQL / MySQL
 - NoSQL: DynamoDB / Firestore / MongoDB
 - KVS / Cache: ElastiCache / Redis / Memcached
-- Queue: SQS / Kafka / Kinesis / Pub/Sub
+- Queue / stream: SQS / Kafka / Pub/Sub
 - Object storage: S3 / GCS
-- Analytics and query engines over stored data: Athena / BigQuery (record the underlying bucket or dataset as the store)
-- Log: CloudWatch Logs / Datadog / Stackdriver / ALB and CDN access logs
+- Query engines over stored data: record the underlying store
+- Log pipelines: application logs, log delivery streams, load balancer and CDN access logs
 - Backup / snapshot: PITR / RDS snapshot / S3 versioning
 
 ### Extract schemas
@@ -39,11 +39,11 @@ Check the data structure stored in each data store:
 - The attribute / column definitions of each table / stream / bucket resource in the infra code
 - Type definitions in the application code (TypeScript types, Go structs, ORM entities)
 - The application's repository / mapper code (inserts, puts, queue producers)
-- Glue catalog / schema registry definitions
+- Schema catalog / registry definitions
 
 ### Classify PII categories
 
-Classify each item into exactly one of these categories. Put an item in the category that fits it alone; use quasi-identifiers only for items that identify a person only in combination.
+Record two separate attributes per item: identifiability (categories 1-3) and sensitivity (category 4). An item can have both, for example a face photo used for identification is a direct identifier and also sensitive. For identifiability pick the single category that fits the item alone; use quasi-identifiers only for items that identify a person only in combination.
 
 #### 1. Direct identifiers
 
@@ -63,7 +63,7 @@ Classify each item into exactly one of these categories. Put an item in the cate
 - Cannot identify a person alone but can in combination: gender / postal code / age band / other coarse attributes
 - A judgment on ease of cross-referencing (容易照合性) is needed
 
-#### 4. Sensitive categories
+#### 4. Sensitivity (second attribute, not an alternative to 1-3)
 
 The two regimes have different lists; do not map one onto the other by name.
 
@@ -105,21 +105,23 @@ Write `personal-information.md` with this structure:
 
 # Summary
 
-The list of data recognized as personal information or equivalent. See each service section for details.
+The list of data recognized as personal information or equivalent. See the details for each item.
 
 ## <service name>
 
 - **<PII data name>**
     - <where it is held> (retention period / deletion operations)
 
-# <service name>
+# Details
 
-## <data store type>
+## <service name>
 
-### N. <table / resource name>
+### <data store type>
+
+#### N. <table / resource name>
 
 - Items held: a / b / c
-- Category and origin per item (actively collected / caller-supplied)
+- Identifiability, sensitivity and origin per item (actively collected / caller-supplied)
 - Legal role: decided (controller / processor / not handling) or open, with the basis
 - Encryption and backup settings
 - Lifecycle / TTL
@@ -129,15 +131,16 @@ The list of data recognized as personal information or equivalent. See each serv
 Example entry:
 
 ```markdown
-### 1. orders (DynamoDB)
+#### 1. orders (DynamoDB)
 
-- Items held: order_id / customer_email / shipping_address / notes
-- customer_email: direct identifier, actively collected (taken from the auth token)
-- shipping_address: direct identifier, caller-supplied (stored as-is from the request body)
+- Items held: order_id / customer_email / shipping_address / health_note / notes
+- customer_email: direct identifier, not sensitive, actively collected (taken from the auth token)
+- shipping_address: direct identifier, not sensitive, caller-supplied (stored as-is from the request body)
+- health_note: quasi-identifier, sensitive (health data), caller-supplied
 - notes: free-form text, caller-supplied; personal information may be included
 - Legal role: open for shipping_address and notes (service stores them for the caller; processor or controller to be decided from the contract), check with legal counsel
 - Encryption and backup: SSE with AWS-managed key, PITR on
-- Lifecycle / TTL: `expires_at` attribute exists but TTL is not enabled in the Terraform resource, so nothing is deleted automatically
+- Lifecycle / TTL: the setting found in the infra code, or "none found"
 - Returned to callers: yes (all items)
 ```
 
@@ -150,6 +153,9 @@ Adapt the paths and patterns below to the stack. They are examples, not a layout
 ```bash
 # Data store resources in infra code (extend the pattern for the clouds in use)
 git grep -lE 'aws_(dynamodb_table|db_instance|rds_cluster|elasticache|s3_bucket|kinesis|sqs_queue)|google_(sql_database_instance|storage_bucket|bigquery_dataset|pubsub_topic)'
+
+# The same in CDK (TypeScript)
+git grep -lE 'new (s3\.Bucket|dynamodb\.(Table|TableV2)|sqs\.Queue|rds\.(DatabaseInstance|DatabaseCluster))\('
 
 # Schema definitions on the application side (extend for the ORM and language in use)
 git grep -lE 'CREATE TABLE|@Entity|^model [A-Z]|z\.object|BaseModel|type [A-Z][A-Za-z]+ struct'
@@ -165,7 +171,7 @@ Compare the stores found from infra code with the stores found from application 
 
 ### 4. Judge PII
 
-Classify each item into the categories above, record its origin, and set the legal role as decided or open (see "Record origin, then decide responsibility separately").
+Record each item's identifiability and sensitivity, record its origin, and set the legal role as decided or open (see "Record origin, then decide responsibility separately").
 
 ### 5. Confirm the legal viewpoint
 
@@ -186,7 +192,7 @@ Also check the access log settings of the load balancer and CDN in the infra cod
 
 ### 7. Output
 
-Generate `personal-information.md` at the path from step 0 in the format above. Use a two-level structure of summary and details.
+Generate `personal-information.md` at the path from step 0 in the format above. Use the two-part structure of summary and details.
 
 ## Cautions
 

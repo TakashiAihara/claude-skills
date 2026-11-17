@@ -18,7 +18,7 @@ Typical use case:
 
 ## Prerequisites
 
-- X has already been pushed, branched from BASE
+- X has already been pushed, branched from BASE, and has its own PR targeting BASE (step 0 checks this)
 - The base of the root A is BASE
 - The base of each following PR is the previous rung (the standard chain form)
 - The working tree is clean and all branches are in sync between local and origin (step 0 checks this)
@@ -31,20 +31,25 @@ Run each step in one shell session. The recorded SHAs live in the `backup/<branc
 
 ```bash
 BASE=<base branch name, e.g. main>   # `gh pr view <PR number of A> --json baseRefName --jq .baseRefName`
-git fetch origin "$BASE" <X> <A> <B> <C> ...
+git fetch origin "$BASE" <X> <A> <B> <C> ... || echo "STOP: fetch failed"
 
-# Any output from either check is a stop condition: fix it or ask the user before going on
+# Any output from these checks is a stop condition: fix it or ask the user before going on
 git status --porcelain
 for b in <X> <A> <B> <C> ...; do
   [ "$(git rev-parse "refs/heads/${b}")" = "$(git rev-parse "origin/${b}")" ] || echo "DIFF ${b}"
 done
+[ "$(gh pr view <PR number of X> --json baseRefName --jq .baseRefName)" = "$BASE" ] || echo "X has no PR targeting $BASE"
+git merge-base --is-ancestor "origin/$BASE" "origin/<X>" || echo "X is behind origin/$BASE"
 
 # Record every branch's original tip (these refs are also the rollback source)
 for b in <X> <A> <B> <C> ...; do
-  git branch --no-track -f "backup/${b}" "origin/${b}"
+  # An existing backup is an earlier rollback point: stop and ask the user instead of overwriting it
+  git branch --no-track "backup/${b}" "origin/${b}" || echo "STOP: backup/${b} exists or cannot be created"
   echo "${b} $(git rev-parse "backup/${b}")"
 done
 ```
+
+If X is behind BASE, either bring X up to date first (rebase X onto `origin/$BASE` and push it with a lease; ask X's owner if it is not yours), then run step 0 again, or accept it: step 2 then prints `NOT STACKED X on origin/$BASE`, which is expected.
 
 ### 1. Rebuild the chain, root first
 
@@ -71,14 +76,23 @@ The lease is pinned to the SHA recorded in step 0, so the push is refused if the
 ### 2. Check the result
 
 ```bash
-git fetch origin
+git fetch origin || echo "STOP: fetch failed, the checks below would read stale refs"
 prev="origin/$BASE"
 for b in <X> <A> <B> <C> ...; do
   if git merge-base --is-ancestor "$prev" "origin/${b}"; then echo "ok ${b} on ${prev}"; else echo "NOT STACKED ${b} on ${prev}"; fi
   prev="origin/${b}"
 done
-# Each PR's base must be the rung below it: A -> X, B -> A, C -> B
-gh pr view <PR number> --json baseRefName --jq .baseRefName
+# Each PR's base must be the rung below it: X -> BASE, A -> X, B -> A, C -> B. Any WRONG PR BASE line is a failure
+prev="$BASE"
+while read -r b pr; do
+  [ "$(gh pr view "$pr" --json baseRefName --jq .baseRefName)" = "$prev" ] || echo "WRONG PR BASE: #${pr} (${b}) should target ${prev}"
+  prev="$b"
+done <<'EOF'
+<X> <PR number of X>
+<A> <PR number of A>
+<B> <PR number of B>
+<C> <PR number of C>
+EOF
 ```
 
 Then run workflow_dispatch (or the relevant check) on the leaf to confirm it works. If a small fix is needed, push a fixup commit to the leaf.
@@ -92,11 +106,16 @@ Then run workflow_dispatch (or the relevant check) on the leaf to confirm it wor
 
 ## Rolling back
 
-Put every branch back at its recorded tip and every PR back on its original base. Each push is leased to the current remote tip.
+Put every branch, remote and local, back at its recorded tip and every PR back on its original base. Each push is leased to the current remote tip.
 
 ```bash
+# Any output from the next line is a stop condition (the reset below would discard it)
+git status --porcelain
+cur=$(git branch --show-current)
 for b in <A> <B> <C> ...; do
-  git push --force-with-lease="refs/heads/${b}:$(git rev-parse "origin/${b}")" origin "backup/${b}:refs/heads/${b}"
+  git push --force-with-lease="refs/heads/${b}:$(git rev-parse "origin/${b}")" origin "backup/${b}:refs/heads/${b}" \
+    && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
+    || { echo "STOP: could not restore ${b}"; break; }
 done
 gh pr edit <PR number of A> --base "$BASE"
 # B, C, ... targeted the previous rung before and still do: no retarget needed

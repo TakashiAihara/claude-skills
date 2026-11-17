@@ -7,7 +7,9 @@ description: "Rebase the current branch onto its base branch, resolving only the
 
 Rebase onto the base branch. Conflicts in documentation files are resolved in favor of the base side at hunk level, so the branch's non-conflicting doc edits survive. Every other conflict goes to the user.
 
-Run the commands of steps 1 to 5 in one shell, because the variables carry over. If the shell was restarted, re-derive `BR`, `BASE`, `ORIG` and `REMOTE_SHA` first.
+Run the commands of steps 1 to 5 in one shell, because the variables carry over. Step 1 prints `BR`, `BASE`, `ORIG` and `REMOTE_SHA`. If the shell is restarted mid-rebase, set them again from that output; do not re-fetch `REMOTE_SHA`, or the lease would cover pushes made after the start.
+
+The base is assumed to live on `origin`. For a fork PR whose base repository is another remote, fetch that remote and use it in place of `origin/$BASE`.
 
 ## Usage
 
@@ -26,16 +28,18 @@ git status --porcelain
 BR=$(git branch --show-current)
 BASE=${BASE_BRANCH:-$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null)}
 [ -n "$BASE" ] || { BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD) && BASE=${BASE#origin/}; }
-git fetch origin
+git fetch origin || echo "fetch failed" >&2
 ORIG=$(git rev-parse HEAD)
 REMOTE_SHA=$(git rev-parse --verify -q "origin/$BR")
-[ -z "$REMOTE_SHA" ] || git rev-list "origin/$BR..HEAD"
+[ -z "$REMOTE_SHA" ] || { echo "unpushed:"; git rev-list "origin/$BR..HEAD"; echo "remote-only:"; git rev-list "HEAD..origin/$BR"; }
 echo "BR=$BR BASE=$BASE ORIG=$ORIG REMOTE_SHA=$REMOTE_SHA"
 ```
 
-- Stop and ask the user if `git status --porcelain` prints anything, if `BASE` is empty, or if `git rev-list` lists unpushed commits (they would be rewritten and pushed too; continue only on explicit confirmation)
+- Stop and ask the user if `git status --porcelain` prints anything, if the fetch failed, or if `BASE` is empty
 - Set `BASE_BRANCH` to the argument, if one was given, before running the block
-- If `REMOTE_SHA` is empty, `origin/$BR` does not exist and there is nothing to force-push: use a plain `git push -u origin HEAD` in step 5 instead
+- Stop if anything is listed under `remote-only:`: someone pushed commits the local branch lacks, and a force push would drop them
+- Commits listed under `unpushed:` would be rewritten and pushed too; continue only on explicit confirmation
+- If `REMOTE_SHA` is empty, `origin/$BR` does not exist and there is nothing to force-push: use a plain `git push -u origin "HEAD:refs/heads/$BR"` in step 5 instead
 - Create the backup ref and keep it until the user confirms the result: `git branch "backup/$BR" "$ORIG"`. If that ref already exists, stop and ask
 
 ### 2. Start the rebase
@@ -65,38 +69,57 @@ During a rebase, "ours" (stage 2) is the base side and "theirs" (stage 3) is the
 
 ```bash
 resolve_doc() {
-  f=$1; t=$(mktemp -d)
-  case "$(git ls-files -u -- "$f" | awk '{print $3}' | sort -u | tr -d '\n')" in
-    123|23)
-      git show ":2:$f" > "$t/ours" && { git show ":1:$f" > "$t/base" 2>/dev/null || : > "$t/base"; } && git show ":3:$f" > "$t/theirs" &&
-        git merge-file --ours -p "$t/ours" "$t/base" "$t/theirs" > "$t/res" && cat "$t/res" > "$f" &&
-        git diff --check -- "$f" && git add -- "$f" ;;
-    13) git rm -q -- "$f" ;;
-    12) git add -- "$f" ;;
-    *) echo "ask the user: $f has unexpected conflict stages" >&2; return 1 ;;
-  esac
+  f=$1; t=$(mktemp -d); rc=0
+  if git ls-files -u -- "$f" | awk '$1 == 120000 { found = 1 } END { exit !found }'; then
+    echo "ask the user: $f is a symlink in at least one stage" >&2; rc=1
+  else
+    case "$(git ls-files -u -- "$f" | awk '{print $3}' | sort -u | tr -d '\n')" in
+      123)
+        git show ":2:$f" > "$t/ours" && git show ":1:$f" > "$t/base" && git show ":3:$f" > "$t/theirs" &&
+          git merge-file --ours -p "$t/ours" "$t/base" "$t/theirs" > "$t/res" && cat "$t/res" > "$f" &&
+          ! git grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' -e '^=======$' -- "$f" &&
+          git add -- "$f" || rc=1 ;;
+      13) git rm -q -- "$f" || rc=1 ;;
+      12) git add -- "$f" || rc=1 ;;
+      23) echo "ask the user: $f was added on both sides" >&2; rc=1 ;;
+      *) echo "ask the user: $f has unexpected conflict stages" >&2; rc=1 ;;
+    esac
+  fi
   rm -rf "$t"
+  return $rc
 }
 ```
 
-- Run `resolve_doc <file>` for each documentation file from step a
-- Stages `123` and `23` (modified on both sides, or added on both sides): conflicting hunks take the base, other hunks keep the branch's edits
+- Run `resolve_doc <file>` for each documentation file from step a. A non-zero return means the file is still conflicted and goes to the user
+- Stage `123` (modified on both sides): conflicting hunks take the base, other hunks keep the branch's edits
+- Stage `23` (added on both sides) is never auto-resolved: with no common base the whole file is one conflict, so the merge would drop all of the branch's edits
+- A symlink in any stage is never auto-resolved: writing the merged text through it would overwrite the link target
 - Stage `13`: the base deleted the file, so the deletion is taken
 - Stage `12`: the branch deleted a file the base modified, so the base version is kept
-- `git diff --check` must pass before `git add`, otherwise the function stops and a conflict marker is still in the file
+- The marker check uses `git grep` because `git diff --check` also flags the trailing double space that Markdown uses for a hard line break. It prints nothing when the file is clean; a hit stops the function before `git add`
 - Record every file resolved this way. Its conflicting hunks of the branch's edits are dropped, which the final report must say
 
-#### c. Continue
+#### c. Check that nothing is unresolved
 
 ```bash
 git diff --name-only --diff-filter=U
-if git diff --cached --quiet; then git rebase --skip; else GIT_EDITOR=true git rebase --continue; fi
 ```
 
-- Run this only when the first command prints nothing, meaning every conflicted file is resolved and staged
+- Go on to step d only when this prints nothing, meaning every conflicted file is resolved and staged
+- Before `git add` of a file the user resolved by hand, run `git grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' -e '^=======$' -- <file>`; it must print nothing
+
+#### d. Continue
+
+```bash
+if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+  if git diff --cached --quiet; then git rebase --skip; else GIT_EDITOR=true git rebase --continue; fi
+else
+  echo "unresolved files remain: do not continue" >&2
+fi
+```
+
 - When the resolution leaves the commit empty, `git diff --cached --quiet` succeeds and the commit is skipped with `git rebase --skip`
-- Both commands exit non-zero when the next commit conflicts; that is the loop continuing, not a failure
-- Before `git add` of a file the user resolved by hand, run `git diff --check -- <file>` and fix any leftover conflict marker
+- Both rebase commands exit non-zero when the next commit conflicts; that is the loop continuing, not a failure
 - Repeat step 3 until the rebase finishes
 
 ### 4. Check the result
@@ -110,7 +133,7 @@ git log --oneline "origin/$BASE..HEAD"
 ### 5. Force push
 
 ```bash
-git push --force-with-lease="$BR:$REMOTE_SHA" origin HEAD
+git push --force-with-lease="refs/heads/$BR:$REMOTE_SHA" origin "HEAD:refs/heads/$BR"
 git fetch origin
 git rev-parse HEAD "origin/$BR"
 ```

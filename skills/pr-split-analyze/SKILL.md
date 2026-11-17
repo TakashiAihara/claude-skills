@@ -13,16 +13,17 @@ Requirements: `git`; `gh` is optional (it only provides the PR's base branch, an
 
 ### 1. Check the diff size
 
-Run the commands of this step in one shell, because `BASE_BRANCH` is reused.
+Run the commands of steps 1 and 2 in one shell, because `BASE_BRANCH` is reused.
 
 ```bash
 # Base: the PR's base if there is a PR, otherwise the remote default branch
 BASE_BRANCH=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null) || BASE_BRANCH=
 [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##')
-git fetch origin "$BASE_BRANCH"
+# Stop and ask the user if this prints STOP: the base is unknown or cannot be fetched
+[ -n "$BASE_BRANCH" ] && git fetch origin "$BASE_BRANCH" || echo "STOP: base branch empty or fetch failed"
 
-# Lockfiles and generated files are not review effort: leave them out of the size (extend the excludes for the repository)
-EXCLUDES=(':(exclude)*.lock' ':(exclude)package-lock.json' ':(exclude)pnpm-lock.yaml' ':(exclude)go.sum' ':(exclude)*.min.js' ':(exclude)*.pb.go')
+# Lockfiles and generated files are not review effort: leave them out of the size, at any depth (extend the excludes for the repository)
+EXCLUDES=(':(exclude,glob)**/*.lock' ':(exclude,glob)**/package-lock.json' ':(exclude,glob)**/pnpm-lock.yaml' ':(exclude,glob)**/go.sum' ':(exclude,glob)**/*.min.js' ':(exclude,glob)**/*.pb.go')
 git diff --stat "origin/$BASE_BRANCH...HEAD" -- . "${EXCLUDES[@]}"
 git diff --numstat "origin/$BASE_BRANCH...HEAD" -- . "${EXCLUDES[@]}" | awk '{add+=$1; del+=$2} END {print "+" add " -" del " = " add+del " lines"}'
 ```
@@ -30,6 +31,8 @@ git diff --numstat "origin/$BASE_BRANCH...HEAD" -- . "${EXCLUDES[@]}" | awk '{ad
 ### 2. Analyze the commit history
 
 ```bash
+# Same shell as step 1; stop if BASE_BRANCH is empty
+[ -n "$BASE_BRANCH" ] || echo "STOP: BASE_BRANCH is empty, run step 1 in this shell first"
 # List the commits on the branch (look for groups with one responsibility each)
 git log --oneline "origin/$BASE_BRANCH..HEAD"
 ```

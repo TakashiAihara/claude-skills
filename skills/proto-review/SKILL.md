@@ -16,17 +16,20 @@ Requirements: `git`; `gh` (optional, to find the PR base); `buf` (optional, for 
 In a middle PR of a PR chain the base is not the default branch, so diffing against the default branch mixes in other PRs' changes and breaks the scope judgment. Run the commands of steps 1-3 in one shell, because `BASE` is reused.
 
 ```bash
-git fetch origin
+git fetch origin || { echo "fetch failed"; exit 1; }
 BASE=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null)
 BASE=${BASE:-$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')}
 echo "diff base = origin/$BASE"
 
-# Three-dot: only what this branch changed since it forked from the base
-git diff "origin/$BASE...HEAD" --name-only -- '*.proto'
+# Three-dot: only what this branch changed since it forked from the base.
+# Status A = new file, M = modified, D = deleted, R<score> = renamed (old path, new path).
+git diff -M --name-status "origin/$BASE...HEAD" -- '*.proto'
 ```
 
-- If `BASE` is empty, ask the user for the base branch.
+- If the fetch fails or `BASE` is empty, stop and ask the user for the base branch.
 - Use the three-dot form everywhere. `git diff "origin/$BASE"` compares the working tree with the base tip, so uncommitted edits and changes made only on the base show up as if the PR made them.
+- The three-dot diff sees commits only: commit or stash local edits first, or the review silently skips them.
+- Keep rename detection on (`-M`). Only status `A` is a new file; with `--no-renames` a renamed file shows as deleted plus added, so the whole file would look new.
 - If no proto files changed, ask the user.
 
 ### 2. Gather context
@@ -46,14 +49,15 @@ Read the whole file as context, but limit findings to what the PR changed. Probl
 
 How to judge each finding:
 
-- A new file (`git cat-file -e "$(git merge-base "origin/$BASE" HEAD):<proto file>"` fails) is entirely inside the diff. `git show origin/$BASE:<file>` also fails for it, so do not use that to read old content.
-- For a file that existed at the fork point, the added lines are the PR's. Count only added lines, not removed lines or the `---`/`+++` headers:
+- A file with status `A` is entirely inside the diff. `git show origin/$BASE:<file>` also fails for it, so do not use that to read old content.
+- For a file that existed at the fork point (status `M` or `R`), the added lines are the PR's. Count only added lines, not removed lines or the `---`/`+++` headers. For a renamed file pass both the old and the new path, or the whole file shows as added:
 
 ```bash
-git diff "origin/$BASE...HEAD" -U0 -- <proto file> | grep -E '^\+([^+]|$)'
+git diff -M "origin/$BASE...HEAD" -U0 -- <old path> <new path> | grep -E '^\+([^+]|$)'
 ```
 
-- A finding about something present (a bad field name, a wrong type) is inside the diff only if its line is in the added lines. A line that appears only as removed (`-`) is a fix, not a problem.
+- A finding about something present (a bad field name, a wrong type) is inside the diff only if its line is in the added lines.
+- A removed line (`-`) is not automatically a fix. Removing a field, enum value or rpc without a matching `reserved` is a breaking change made by this PR: inside the diff, high severity. Check the removed lines for it.
 - A finding about something missing (no `_UNSPECIFIED` value, no `reserved`, no `Response` suffix) cannot be grepped for. Read the diff and judge whether the enclosing enum, message or rpc was added or changed by the PR: if it was, the finding is inside the diff; if the PR did not touch it, it is pre-existing.
 - Old content, when needed: `git show "$(git merge-base "origin/$BASE" HEAD):<proto file>"`.
 
@@ -73,7 +77,7 @@ buf breaking --against ".git#branch=origin/$BASE"
 ```
 
 - 0 breaking findings against the base means this PR alone is wire safe.
-- For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>"` to see the effect of the whole chain stacked on the default branch. Violations that appear only there come from other PRs in the chain: report them separately from this PR's own.
+- For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>"` to see the effect of the whole chain stacked on the default branch. A violation that appears only there is not automatically another PR's: check whether this PR's added lines are involved (for example it reuses a number or name that an earlier PR in the chain freed) before attributing it elsewhere, and report the rest separately from this PR's own.
 - Missing `reserved`, deleted enum values and changed field types are detected mechanically by `buf breaking`. Cross-check them against the "Need for reserved" item below.
 
 ### 4. Review checklist

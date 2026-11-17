@@ -14,13 +14,13 @@ Run the commands of steps 1 to 4 in one shell, because `BASE` and `CANDIDATES` c
 ### 1. Fetch and detect the default branch
 
 ```bash
-git fetch --prune origin
+git fetch --prune origin || echo "fetch failed" >&2
 BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD) || echo "origin/HEAD is not set: run 'git remote set-head origin --auto' or ask the user for the default branch" >&2
 BASE=${BASE#origin/}
 echo "$BASE"
 ```
 
-- Stop here if `BASE` is empty or `origin/$BASE` does not exist. Never guess a default branch, because every later check depends on it
+- Stop here if the fetch failed, if `BASE` is empty, or if `origin/$BASE` does not exist. A stale `origin/$BASE` can mark a branch as merged that the real remote never received, and never guess a default branch
 
 ### 2. Collect deletion candidates
 
@@ -39,11 +39,11 @@ git for-each-ref --format='%(refname:short)' refs/heads | while read -r b; do
     continue
   fi
   mb=$(git merge-base "origin/$BASE" "$b") || { echo "skip $b: no merge-base" >&2; continue; }
-  tmp=$(git commit-tree "$b^{tree}" -p "$mb" -m _) || { echo "skip $b: commit-tree failed" >&2; continue; }
-  out=$(git cherry "origin/$BASE" "$tmp") || { echo "skip $b: git cherry failed" >&2; continue; }
+  tmp=$(git -c user.name=x -c user.email=x@x commit-tree "$b^{tree}" -p "$mb" -m _) || { echo "skip $b: commit-tree failed" >&2; continue; }
+  out=$(git cherry "origin/$BASE" "$tmp" "$mb") || { echo "skip $b: git cherry failed" >&2; continue; }
   [ -n "$out" ] || { echo "skip $b: empty cherry output" >&2; continue; }
   if ! printf '%s\n' "$out" | grep -q '^+'; then
-    printf 'squash\t%s\t%s\n' "$b" "$(git rev-parse "$b")" >> "$CANDIDATES"
+    printf 'squash (content match)\t%s\t%s\n' "$b" "$(git rev-parse "$b")" >> "$CANDIDATES"
   fi
 done
 cat "$CANDIDATES"
@@ -52,6 +52,7 @@ cat "$CANDIDATES"
 - Columns are kind, branch, tip SHA
 - The squash check only runs for branches that are ahead of the base (a branch that is not an ancestor always has at least one commit the base lacks)
 - A `-` line from `git cherry` means the base already holds that exact patch, which is what a squash merge produces; a `+` line means it does not
+- The squash match is by content only: a squash that was merged and later reverted on the base still matches. That is why the user approves the list, and why the tip SHA is printed for restoring
 - A failed `git cherry` is never read as "merged": the branch is skipped and reported on stderr
 - A squash commit that was edited on the way in (for example conflict resolution) has a different patch-id and is not detected. This fails safe: the branch stays
 
@@ -65,16 +66,12 @@ cat "$CANDIDATES"
 ```bash
 while IFS=$(printf '\t') read -r kind b sha; do
   [ "$(git rev-parse "$b")" = "$sha" ] || { echo "skip $b: tip moved since approval" >&2; continue; }
-  case "$kind" in
-    merged) git branch -d "$b" ;;
-    squash) git branch -D "$b" ;;
-  esac
+  git branch -D "$b"
 done < "$CANDIDATES"
 git branch --list
 ```
 
-- Regular merges use `-d`, which refuses anything not fully merged
-- Squash-merged branches need `-D`, because `-d` reports "not fully merged"
+- `-D` is used for every kind, after the tip SHA check. `git branch -d` checks the merge against `HEAD` or the upstream, not `origin/$BASE`, so it refuses valid candidates unless run from an up-to-date default branch, and it always refuses squash merges
 - To restore a deleted branch: `git branch <name> <sha>` with the SHA from the list
 - Finish by reporting the deleted branches and the remaining branch list
 
