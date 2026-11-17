@@ -7,7 +7,7 @@ description: "Execute a PR split: back up the branch, build a chain of part bran
 
 Split a branch according to the plan decided with the pr-split-analyze skill, and create a feature -> feature chain of PRs.
 
-Requirements: `git`, `gh` (authenticated). Size targets live in the pr-split-analyze skill; they are not repeated here.
+Requirements: `git` 2.38 or later (for `--no-update-refs`), `gh` (authenticated). Size targets live in the pr-split-analyze skill; they are not repeated here.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ git branch --no-track "backup/${CURRENT}-$(date +%Y%m%d%H%M%S)" "$CURRENT"
 SRC="$CURRENT"
 if ! git merge-base --is-ancestor "origin/$BASE_BRANCH" "$CURRENT"; then
   SRC="${CURRENT}-rebased"
-  git switch --no-track -c "$SRC" "$CURRENT" && git rebase "origin/$BASE_BRANCH" || echo "STOP: rebase of the copy failed: run git rebase --abort and ask the user"
+  git switch --no-track -c "$SRC" "$CURRENT" && git rebase --no-update-refs "origin/$BASE_BRANCH" || echo "STOP: rebase of the copy failed: run git rebase --abort and ask the user"
 fi
 ```
 
@@ -81,8 +81,8 @@ for i in "${PARTS[@]}"; do
   echo "== part ${i} vs ${prev}"; git diff --stat "$prev" "${CURRENT}-part${i}"
   prev="${CURRENT}-part${i}"
 done
-# Integrity: the last part must equal the source; any output means something was lost or added
-git diff --stat "$SRC" "$prev"
+# Integrity: the last part must equal the source; any output or a non-zero exit means something was lost or added
+git diff --stat --exit-code "$SRC" "$prev" && echo "parts equal the source"
 ```
 
 Compare the per-part output with the plan. Then check each part builds and passes its tests on its own: check out each part and run the repository's build and test commands.
@@ -132,7 +132,7 @@ PREV="${CURRENT}-part1"; NEXT="${CURRENT}-part2"
 # (the old tip of PREV marks where they start), retarget, then push; the lease is pinned to NEXT's tip as it was before the rebase
 git fetch origin "$BASE_BRANCH" \
   && git switch "$NEXT" \
-  && git rebase --onto "origin/$BASE_BRANCH" "$(git rev-parse "backup/${PREV}")" "$NEXT" \
+  && git rebase --no-update-refs --onto "origin/$BASE_BRANCH" "$(git rev-parse "backup/${PREV}")" "$NEXT" \
   && gh pr edit <NEXT-pr-number> --base "$BASE_BRANCH" \
   && git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT"
 ```

@@ -9,7 +9,7 @@ Insert another branch X below the root of a PR chain (BASE -> A -> B -> C -> ...
 
 Terms: a rung is one PR of the chain; the root is the rung directly on BASE (A); the leaf is the top rung; BASE is the branch the root PR currently targets.
 
-Requirements: `git`, `gh` (authenticated). If the PRs were created with a stacking tool such as `gh stack`, use that tool's own commands to change bases instead of `gh pr edit --base`.
+Requirements: `git` 2.38 or later (for `--no-update-refs`), `gh` (authenticated). If the PRs were created with a stacking tool such as `gh stack`, use that tool's own commands to change bases instead of `gh pr edit --base`.
 
 Typical use case:
 
@@ -25,7 +25,7 @@ Typical use case:
 
 ## Procedure
 
-Run each step in one shell session. The recorded SHAs live in the `backup/<branch>` refs, so no variable has to survive between steps.
+Run each step in one shell session. The recorded SHAs live in the `backup/<branch>` refs (original tips) and the `refs/pushed/<branch>` refs (what step 1 pushed), so no variable has to survive between steps.
 
 ### 0. Check and record
 
@@ -57,16 +57,21 @@ For each rung R in order A, B, C, ..., with P the rung below it in the new chain
 
 ```bash
 # rung A: P = X, old parent = origin/$BASE
-git switch <A>
-git rebase --onto <X> "origin/$BASE" <A>
-gh pr edit <PR number of A> --base <X>      # retarget before pushing so the PR never shows X's commits as its own
-git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A>
+# One chain per rung: a stopped rebase must not retarget the PR or push. --no-update-refs keeps rebase.updateRefs from moving backup/* or other rungs
+# The retarget comes before the push so the PR never shows X's commits as its own; refs/pushed/<A> records what was pushed (the rollback lease)
+git switch <A> \
+  && git rebase --no-update-refs --onto <X> "origin/$BASE" <A> \
+  && gh pr edit <PR number of A> --base <X> \
+  && git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A> \
+  && git update-ref refs/pushed/<A> "$(git rev-parse <A>)"
 
 # rung B: P = A, old parent = backup/A
-git switch <B>
-git rebase --onto <A> "$(git rev-parse backup/<A>)" <B>
-gh pr edit <PR number of B> --base <A>      # unchanged when B already targets A; keep it for uniformity
-git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B>
+git switch <B> \
+  && git rebase --no-update-refs --onto <A> "$(git rev-parse backup/<A>)" <B> \
+  && gh pr edit <PR number of B> --base <A> \
+  && git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B> \
+  && git update-ref refs/pushed/<B> "$(git rev-parse <B>)"
+# gh pr edit changes nothing when B already targets A; it stays in the chain for uniformity
 
 # rung C and the rest: same shape, P = B, old parent = backup/B, and so on
 ```
@@ -99,29 +104,31 @@ Then run workflow_dispatch (or the relevant check) on the leaf to confirm it wor
 
 ## Handling conflicts
 
-- A `git rebase` stops with a conflict: resolve it, run `git diff --check` (it must print nothing), then `git add <file>` and `git rebase --continue`. To give up on this rung, run `git rebase --abort`; the branch and the remote are unchanged because nothing is pushed before the rebase finishes.
+- A `git rebase` stops with a conflict: resolve it, run `git diff --check` (it must print nothing), then `git add <file>` and `git rebase --continue`. To give up on this rung, run `git rebase --abort`; that restores only the rung being rebased. Rungs already pushed stay rewritten and retargeted, and the rungs above them still carry the old history, so go to Rolling back or finish the cascade.
 - A commit that is already present in the new parent (the same change duplicated across rungs): `git rebase --skip` is fine. `git rebase` detects duplicates by patch-id, but a commit whose content changed (rewritten by a conflict resolution) is not recognized as a duplicate. The sign that skip is OK is that an equivalent-content commit with a new SHA already exists in the rungs below.
 - modify/delete conflict: if the intent of the deleting commit is clear, `git rm <file>`; if the file should stay, `git add <file>`; then `git rebase --continue`.
 - Many unrelated commits are being re-applied on a rung: the old parent SHA is wrong. Abort, and check that `git rev-parse backup/<P>` is the tip the rung was originally based on.
 
 ## Rolling back
 
-Put every branch, remote and local, back at its recorded tip and every PR back on its original base. Each push is leased to the current remote tip.
+Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
 git status --porcelain
 cur=$(git branch --show-current)
+failed=
 for b in <A> <B> <C> ...; do
-  git push --force-with-lease="refs/heads/${b}:$(git rev-parse "origin/${b}")" origin "backup/${b}:refs/heads/${b}" \
+  { ! p=$(git rev-parse -q --verify "refs/pushed/${b}") || git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}"; } \
     && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
-    || { echo "STOP: could not restore ${b}"; break; }
+    || { echo "STOP: could not restore ${b}"; failed=1; break; }
 done
-gh pr edit <PR number of A> --base "$BASE"
+# Revert the PR base only when every branch was restored
+[ -z "$failed" ] && gh pr edit <PR number of A> --base "$BASE"
 # B, C, ... targeted the previous rung before and still do: no retarget needed
 ```
 
-Delete the `backup/*` refs only after the new chain is confirmed.
+Delete the `backup/*` and `refs/pushed/*` refs (`git update-ref -d <ref>`) only after the new chain or the rollback is confirmed.
 
 ## Chains where each rung has a different owner
 

@@ -23,9 +23,10 @@ BASE_BRANCH=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null) || BA
 [ -n "$BASE_BRANCH" ] && git fetch origin "$BASE_BRANCH" || echo "STOP: base branch empty or fetch failed"
 
 # Lockfiles and generated files are not review effort: leave them out of the size, at any depth (extend the excludes for the repository)
-EXCLUDES=(':(exclude,glob)**/*.lock' ':(exclude,glob)**/package-lock.json' ':(exclude,glob)**/pnpm-lock.yaml' ':(exclude,glob)**/go.sum' ':(exclude,glob)**/*.min.js' ':(exclude,glob)**/*.pb.go')
-git diff --stat "origin/$BASE_BRANCH...HEAD" -- . "${EXCLUDES[@]}"
-git diff --numstat "origin/$BASE_BRANCH...HEAD" -- . "${EXCLUDES[@]}" | awk '{add+=$1; del+=$2} END {print "+" add " -" del " = " add+del " lines"}'
+# ':/' makes the diff cover the whole repository, and `top` makes each exclude relative to the root too: without them a run from a subdirectory sees only that subdirectory
+EXCLUDES=(':(top,exclude,glob)**/*.lock' ':(top,exclude,glob)**/package-lock.json' ':(top,exclude,glob)**/pnpm-lock.yaml' ':(top,exclude,glob)**/go.sum' ':(top,exclude,glob)**/*.min.js' ':(top,exclude,glob)**/*.pb.go')
+git diff --stat "origin/$BASE_BRANCH...HEAD" -- ':/' "${EXCLUDES[@]}"
+git diff --numstat "origin/$BASE_BRANCH...HEAD" -- ':/' "${EXCLUDES[@]}" | awk '{add+=$1; del+=$2} END {print "+" add " -" del " = " add+del " lines"}'
 ```
 
 ### 2. Analyze the commit history

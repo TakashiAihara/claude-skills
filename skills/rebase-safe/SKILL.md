@@ -1,6 +1,6 @@
 ---
 name: rebase-safe
-description: "Rebase the current branch onto its base branch, resolving only the conflicting hunks of documentation files in favor of the base, asking the user about every other conflict, then force-pushing with a pinned lease. Use when a PR branch needs to catch up with its base. Requirements: git, optionally gh. Triggers: rebase, rebase safe, safe rebase, rebase して, 安全に rebase."
+description: "Rebase the current branch onto its base branch, resolving only the conflicting hunks of documentation files in favor of the base, asking the user about every other conflict, then force-pushing with a pinned lease. Use when a PR branch needs to catch up with its base. Requirements: git 2.38 or later, optionally gh. Triggers: rebase, rebase safe, safe rebase, rebase して, 安全に rebase."
 ---
 
 # Safe Rebase
@@ -8,6 +8,8 @@ description: "Rebase the current branch onto its base branch, resolving only the
 Rebase onto the base branch. Conflicts in documentation files are resolved in favor of the base side at hunk level, so the branch's non-conflicting doc edits survive. Every other conflict goes to the user.
 
 Run the commands of steps 1 to 5 in one shell, because the variables carry over. Step 1 prints `BR`, `BASE`, `ORIG` and `REMOTE_SHA`. If the shell is restarted mid-rebase, set them again from that output; do not re-fetch `REMOTE_SHA`, or the lease would cover pushes made after the start.
+
+Run everything from the repository top level: the index paths used in step 3 (`:2:<file>`) are relative to it.
 
 The base is assumed to live on `origin`. For a fork PR whose base repository is another remote, fetch that remote and use it in place of `origin/$BASE`.
 
@@ -30,12 +32,14 @@ BASE=${BASE_BRANCH:-$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/nul
 [ -n "$BASE" ] || { BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD) && BASE=${BASE#origin/}; }
 git fetch origin || echo "fetch failed" >&2
 ORIG=$(git rev-parse HEAD)
+echo "merge commits in the rewrite range:"; git rev-list --merges "origin/$BASE..HEAD"
 REMOTE_SHA=$(git rev-parse --verify -q "origin/$BR")
 [ -z "$REMOTE_SHA" ] || { echo "unpushed:"; git rev-list "origin/$BR..HEAD"; echo "remote-only:"; git rev-list "HEAD..origin/$BR"; }
 echo "BR=$BR BASE=$BASE ORIG=$ORIG REMOTE_SHA=$REMOTE_SHA"
 ```
 
-- Stop and ask the user if `git status --porcelain` prints anything, if the fetch failed, or if `BASE` is empty
+- Stop and ask the user if `git status --porcelain` prints anything, if the fetch failed, or if `BR` or `BASE` is empty (an empty `BR` means a detached HEAD)
+- Stop and ask the user if any merge commit is listed: the rebase would flatten it
 - Set `BASE_BRANCH` to the argument, if one was given, before running the block
 - Stop if anything is listed under `remote-only:`: someone pushed commits the local branch lacks, and a force push would drop them
 - Commits listed under `unpushed:` would be rewritten and pushed too; continue only on explicit confirmation
@@ -45,9 +49,10 @@ echo "BR=$BR BASE=$BASE ORIG=$ORIG REMOTE_SHA=$REMOTE_SHA"
 ### 2. Start the rebase
 
 ```bash
-git rebase "origin/$BASE"
+git rebase --no-rerere-autoupdate --no-update-refs "origin/$BASE"
 ```
 
+- `--no-rerere-autoupdate` keeps rerere from staging a source conflict on its own, and `--no-update-refs` keeps `rebase.updateRefs` from moving other branches such as `backup/*`
 - To give up at any point: `git rebase --abort`. After the rebase finished, `git reset --hard "backup/$BR"` restores the original (ask the user first)
 
 ### 3. Conflict resolution loop
@@ -76,9 +81,9 @@ resolve_doc() {
     case "$(git ls-files -u -- "$f" | awk '{print $3}' | sort -u | tr -d '\n')" in
       123)
         git show ":2:$f" > "$t/ours" && git show ":1:$f" > "$t/base" && git show ":3:$f" > "$t/theirs" &&
-          git merge-file --ours -p "$t/ours" "$t/base" "$t/theirs" > "$t/res" && cat "$t/res" > "$f" &&
-          ! git grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' -e '^=======$' -- "$f" &&
-          git add -- "$f" || rc=1 ;;
+          git merge-file --ours -p "$t/ours" "$t/base" "$t/theirs" > "$t/res" &&
+          ! grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' "$t/res" &&
+          cat "$t/res" > "$f" && git add -- "$f" || rc=1 ;;
       13) git rm -q -- "$f" || rc=1 ;;
       12) git add -- "$f" || rc=1 ;;
       23) echo "ask the user: $f was added on both sides" >&2; rc=1 ;;
@@ -96,7 +101,7 @@ resolve_doc() {
 - A symlink in any stage is never auto-resolved: writing the merged text through it would overwrite the link target
 - Stage `13`: the base deleted the file, so the deletion is taken
 - Stage `12`: the branch deleted a file the base modified, so the base version is kept
-- The marker check uses `git grep` because `git diff --check` also flags the trailing double space that Markdown uses for a hard line break. It prints nothing when the file is clean; a hit stops the function before `git add`
+- The marker check runs on the merged temp result, before anything is written to the file, so a hit leaves git's conflict state untouched and the function returns non-zero. It looks only for `<<<<<<< ` and `>>>>>>> `: `=======` alone is also a Markdown setext heading underline, and `git diff --check` flags the trailing double space of a Markdown hard line break
 - Record every file resolved this way. Its conflicting hunks of the branch's edits are dropped, which the final report must say
 
 #### c. Check that nothing is unresolved
@@ -106,7 +111,7 @@ git diff --name-only --diff-filter=U
 ```
 
 - Go on to step d only when this prints nothing, meaning every conflicted file is resolved and staged
-- Before `git add` of a file the user resolved by hand, run `git grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' -e '^=======$' -- <file>`; it must print nothing
+- Before `git add` of a file the user resolved by hand, run `git grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' -- <file>`; it must print nothing
 
 #### d. Continue
 
@@ -133,13 +138,15 @@ git log --oneline "origin/$BASE..HEAD"
 ### 5. Force push
 
 ```bash
-git push --force-with-lease="refs/heads/$BR:$REMOTE_SHA" origin "HEAD:refs/heads/$BR"
-git fetch origin
-git rev-parse HEAD "origin/$BR"
+git push --force-with-lease="refs/heads/$BR:$REMOTE_SHA" origin "HEAD:refs/heads/$BR" \
+  && git fetch origin \
+  && [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BR")" ] \
+  && echo "pushed: origin/$BR is at $(git rev-parse HEAD)" \
+  || echo "STOP: the push failed or origin/$BR differs from HEAD"
 ```
 
 - The lease is pinned to the SHA recorded in step 1, so the push fails if someone else pushed to the branch in between. Do not retry with plain `--force`; ask the user
-- The two SHAs from the last command must be equal; if they differ the push was rejected
+- Only the `pushed:` line means success; a `STOP:` line means the push was rejected or did not land
 
 ### 6. Report the result
 

@@ -24,7 +24,7 @@ echo "$BASE"
 
 ### 2. Collect deletion candidates
 
-Candidates exclude the current branch, the default branch, long-lived branches (`develop`, `release/*`), and branches checked out in another worktree.
+Candidates exclude the current branch, the default branch, long-lived branches (`develop`, `release/*`), rollback refs (`backup/*`, which other skills of this plugin create and tell the user to keep), and branches checked out in another worktree.
 
 Regular merges are branches whose tip is an ancestor of `origin/$BASE`. Squash merges rewrite history, so no commit of the branch exists in the base; instead build one synthetic commit holding the branch's whole tree on top of the merge-base and ask `git cherry` whether the base has a commit with the same patch-id:
 
@@ -32,7 +32,7 @@ Regular merges are branches whose tip is an ancestor of `origin/$BASE`. Squash m
 CANDIDATES=$(mktemp)
 CUR=$(git branch --show-current)
 git for-each-ref --format='%(refname:short)' refs/heads | while read -r b; do
-  case "$b" in "$CUR"|"$BASE"|develop|release/*) continue ;; esac
+  case "$b" in "$CUR"|"$BASE"|develop|release/*|backup/*) continue ;; esac
   [ -z "$(git for-each-ref --format='%(worktreepath)' "refs/heads/$b")" ] || continue
   if git merge-base --is-ancestor "$b" "origin/$BASE"; then
     printf 'merged\t%s\t%s\n' "$b" "$(git rev-parse "$b")" >> "$CANDIDATES"
@@ -65,6 +65,7 @@ cat "$CANDIDATES"
 
 ```bash
 while IFS=$(printf '\t') read -r kind b sha; do
+  [ -n "$b" ] && [ -n "$sha" ] || { echo "skip malformed row: '$b' '$sha'" >&2; continue; }
   [ "$(git rev-parse "$b")" = "$sha" ] || { echo "skip $b: tip moved since approval" >&2; continue; }
   git branch -D "$b"
 done < "$CANDIDATES"

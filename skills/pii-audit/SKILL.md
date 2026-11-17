@@ -182,7 +182,7 @@ Use the scope the user gave in step 0.
 
 ### 6. Check the logs
 
-Check that PII is not written to application logs, log delivery streams, or load-balancer and CDN access logs. Grep for logging of request bodies, headers, source IP, User-Agent and email, not for every logger call:
+Check that PII is not written to application logs, log delivery streams, or load-balancer and CDN access logs. Grep for logging of request bodies, headers, source IP, User-Agent and email, not for every logger call. A logger call that passes an object (`logger.info({ user })`) must be followed to the object's fields: the keyword grep only sees the call line, not what the object holds:
 
 ```bash
 git grep -nIiE '(log|logger|console|print)[A-Za-z_.]*\(.*(body|headers|remote_?addr|\bip\b|user-?agent|x-forwarded-for|email)'

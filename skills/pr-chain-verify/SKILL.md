@@ -7,7 +7,7 @@ description: "Add a per-PR verification document to every PR in a PR chain as it
 
 Add a markdown file as a separate commit to each PR in a PR chain, as a record that the PR's behavior was verified. The work involves a cascade rebase from the root (the PR directly on the base branch) to the leaf (the top PR).
 
-Requirements: `git`, `gh` (authenticated).
+Requirements: `git` 2.38 or later (for `--no-update-refs`), `gh` (authenticated).
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ Order the chain from root to leaf. Handle independent PRs (based on the default 
 
 ### 3. File template
 
-Fill in only what was observed. A row that was not run says `not run`, never a pass.
+Fill in only what was observed. A row that was not run says `not run`, never a pass. Before the push `gh pr checks` still reports the old head, so the CI row is `not run` unless the rebased head was pushed and CI finished on it.
 
 ```markdown
 # Test result: #<PR number> <PR title>
@@ -58,7 +58,7 @@ Fill in only what was observed. A row that was not run says `not run`, never a p
 
 | # | Test | Means | Expected | Result |
 |---|------|-------|----------|--------|
-| 1 | CI jobs on the PR head before this commit | `gh pr checks <num>` | All pass | <pass / fail, filled in after CI ran; `not run` otherwise> |
+| 1 | CI jobs on the rebased PR head | `gh pr checks <num>` | All pass | <pass / fail, only after the rebased head was pushed and CI ran on it; `not run` otherwise> |
 | 2 | <specific item> | <command/means> | <expected> | <pass / fail / not run> |
 
 ## Notes
@@ -100,13 +100,14 @@ VFILE="<vfile>"                   # the path fixed in step 1
 # Each line is one chain: it stops at the first failing command, so the reset never runs on the wrong branch.
 # Safe only because step 4 found no uncommitted or unpushed work. Run exactly one of the two lines.
 # Root PR: pick up the latest base
-git switch "$BR" && git reset --hard "origin/${BR}" && git rebase "origin/${PARENT_BR}"
+git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --no-update-refs "origin/${PARENT_BR}"
 # Every other PR: replay only its own commits onto the parent's new tip; the parent's original tip marks where they start
-git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --onto "origin/${PARENT_BR}" "$(git rev-parse "backup/${PARENT_BR}")" "$BR"
+git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --no-update-refs --onto "origin/${PARENT_BR}" "$(git rev-parse "backup/${PARENT_BR}")" "$BR"
 
 # If the chain above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
 git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
-  && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR"
+  && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR" \
+  && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")"   # the pushed tip is the rollback lease
 ```
 
 If `git rebase` stops on a conflict, stop the cascade: resolve it as described under "Handling conflicts" in the pr-chain-reorder-head skill (`git diff --check`, `git add`, `git rebase --continue`), or run `git rebase --abort` and ask the user. Nothing has been pushed for that rung yet.
@@ -123,7 +124,8 @@ VFILE="<vfile>"
 
 git switch "$BR" && git reset --hard "origin/${BR}"
 # If the line above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
-git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" && git push origin "$BR"
+git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
+  && git push origin "$BR" && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")"
 ```
 
 ### 7. Verify chain integrity
@@ -137,6 +139,8 @@ while read -r pr br parent vfile; do
   git merge-base --is-ancestor "origin/${parent}" "origin/${br}" || echo "NOT STACKED: ${br} is missing ${parent}"
   [ "$(gh pr view "$pr" --repo <owner/repo> --json baseRefName --jq .baseRefName)" = "$parent" ] || echo "WRONG PR BASE: #${pr} should target ${parent}"
   git cat-file -e "origin/${br}:${vfile}" || echo "MISSING FILE: ${vfile} on ${br}"
+  [ "$(git cat-file -s "origin/${br}:${vfile}")" -gt 0 ] || echo "EMPTY FILE: ${vfile} on ${br}"
+  git show "origin/${br}:${vfile}" | grep -qF "#${pr}" || echo "FILE DOES NOT MENTION #${pr}: ${vfile} on ${br}"
   # The file must be added by this branch's own commits, not inherited from a parent
   [ -n "$(git diff --name-only --diff-filter=A "origin/${parent}...origin/${br}" -- "$vfile")" ] || echo "FILE NOT ADDED BY ${br}: ${vfile}"
   gh pr view "$pr" --repo <owner/repo> --json number,mergeable,mergeStateStatus \
@@ -146,7 +150,7 @@ done <<'EOF'
 EOF
 ```
 
-No `STOP` / `NOT STACKED` / `WRONG PR BASE` / `MISSING FILE` / `FILE NOT ADDED BY` line means the chain is intact. To undo, restore each branch, remote and local, from its `backup/<branch>` as in the Rolling back section of pr-chain-reorder-head; skip its `gh pr edit` line, because this skill does not change PR bases.
+No `STOP` / `NOT STACKED` / `WRONG PR BASE` / `MISSING FILE` / `EMPTY FILE` / `FILE DOES NOT MENTION` / `FILE NOT ADDED BY` line means the chain is intact. To undo, restore each branch, remote and local, from its `backup/<branch>` as in the Rolling back section of pr-chain-reorder-head (its lease is the `refs/pushed/<branch>` ref recorded above); skip its `gh pr edit` line, because this skill does not change PR bases.
 
 ## Output
 
