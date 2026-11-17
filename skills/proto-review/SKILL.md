@@ -1,85 +1,105 @@
 ---
 name: proto-review
-description: "Review protobuf files for design quality and compliance with Google's API Improvement Proposals (AIP): naming, Request/Response suffixes, enum UNSPECIFIED values, reserved fields, consistency with design docs, extensibility, and buf lint/format/breaking checks, with findings scoped to the PR diff versus pre-existing issues. Triggers: proto review, review proto files, protobuf review, proto レビュー."
+description: "Review protobuf files for design quality and compliance with Google's API Improvement Proposals (AIP): naming, Request/Response messages, enum UNSPECIFIED values, reserved fields, consistency with design docs, and extensibility, plus buf lint/format/breaking checks, with each finding scoped to the PR diff or marked pre-existing. Use when reviewing a PR or branch that changes .proto files. Triggers: proto review, review proto files, protobuf review, proto レビュー."
 ---
 
 # Proto Review
 
-Review the design of proto files.
+Review the design of proto files changed on the current branch.
 
----
+Requirements: `git`; `gh` (optional, to find the PR base); `buf` (optional, for the mechanical checks in step 3).
 
 ## Review procedure
 
-### 1. Identify the target files and decide the base branch
+### 1. Decide the base branch and list the changed proto files
 
-First decide which base branch to diff against. In a middle PR of a PR chain the base is not `main`, so diffing against `main` mixes in the diff of downstream PRs (such as a revert PR) and breaks the scope judgment.
+In a middle PR of a PR chain the base is not the default branch, so diffing against the default branch mixes in other PRs' changes and breaks the scope judgment. Run the commands of steps 1-3 in one shell, because `BASE` is reused.
 
 ```bash
-# Get the base of the PR tied to the branch under review (chain PR aware)
-BRANCH=$(git branch --show-current)
-BASE=$(gh pr view "$BRANCH" --json baseRefName --jq .baseRefName 2>/dev/null)
-BASE=${BASE:-main}   # main if there is no PR
+git fetch origin
+BASE=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null)
+BASE=${BASE:-$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')}
 echo "diff base = origin/$BASE"
 
-# Get the proto files changed against that base
-git diff "origin/$BASE" --name-only -- '*.proto'
+# Three-dot: only what this branch changed since it forked from the base
+git diff "origin/$BASE...HEAD" --name-only -- '*.proto'
 ```
 
-Read every `git diff main` / `git show main:` in the following steps as `origin/$BASE` above. Fixing on `main` is fine only for a standalone PR whose base is main.
-
-If no proto files changed, ask the user.
+- If `BASE` is empty, ask the user for the base branch.
+- Use the three-dot form everywhere. `git diff "origin/$BASE"` compares the working tree with the base tip, so uncommitted edits and changes made only on the base show up as if the PR made them.
+- If no proto files changed, ask the user.
 
 ### 2. Gather context
 
 Read the following in parallel:
 
-- The whole of each changed proto file (read the whole file, not just the diff)
-- Related design documents (under `docs/design-docs/`), if any
-- Check the diff with `git diff main -- <proto files>`
+- The whole of each changed proto file (the whole file, not just the diff)
+- Related design documents (for example under `docs/design-docs/`), if any
+- The diff: `git diff "origin/$BASE...HEAD" -- <proto files>`
 
 #### Scope principle: focus inside the PR diff, file the rest as separate issues
 
-Read the whole file as context, but by default limit the findings to the areas the PR diff touched. Existing problems on main (outside the diff) are not this PR's responsibility, and mixing them in causes confirmation round trips in proportion to how many out-of-diff items the first report contains:
+Read the whole file as context, but limit findings to what the PR changed. Problems that already existed on the base are not this PR's responsibility, and mixing them in costs confirmation round trips.
 
-- Problems inside the diff -> propose fixes in this PR
-- Problems outside the diff -> prompt the user to file a separate issue (do not bloat this PR)
+- Problem inside the diff: propose a fix in this PR
+- Problem outside the diff: prompt the user to file a separate issue
 
-How to judge (always run this for each finding):
+How to judge each finding:
+
+- A new file (`git cat-file -e "$(git merge-base "origin/$BASE" HEAD):<proto file>"` fails) is entirely inside the diff. `git show origin/$BASE:<file>` also fails for it, so do not use that to read old content.
+- For a file that existed at the fork point, the added lines are the PR's. Count only added lines, not removed lines or the `---`/`+++` headers:
 
 ```bash
-DIFF_FILE=$(mktemp)
-git diff main -- <proto file> > "$DIFF_FILE"
-# Pre-existing on main (still in the whole file at HEAD, but unchanged inside the diff), for example:
-git show main:<proto file> | grep -nE '<pattern of the finding>'   # present on main = candidate for outside the diff
-grep -E '^[+-]' "$DIFF_FILE" | grep -i '<pattern of the finding>'   # appears in the diff = inside the diff
+git diff "origin/$BASE...HEAD" -U0 -- <proto file> | grep -E '^\+([^+]|$)'
 ```
 
-If the user asks back "did you limit this to the changed lines only?", the first report was lacking.
+- A finding about something present (a bad field name, a wrong type) is inside the diff only if its line is in the added lines. A line that appears only as removed (`-`) is a fix, not a problem.
+- A finding about something missing (no `_UNSPECIFIED` value, no `reserved`, no `Response` suffix) cannot be grepped for. Read the diff and judge whether the enclosing enum, message or rpc was added or changed by the PR: if it was, the finding is inside the diff; if the PR did not touch it, it is pre-existing.
+- Old content, when needed: `git show "$(git merge-base "origin/$BASE" HEAD):<proto file>"`.
 
-### 3. Review checklist
+### 3. Mechanical checks with buf (before the manual checklist)
 
-Review along the checklist below. Do not report items with no problem. Report only the ones with problems.
+Visual review cannot catch wire compatibility breaks. In a repo with `buf.yaml`, run these from the module root (the directory that holds `buf.yaml`) and include the results in the report.
+
+```bash
+# Naming and style
+buf lint
+
+# Format drift (--exit-code makes it CI-equivalent)
+buf format --diff --exit-code
+
+# Wire breaking check against the base from step 1
+buf breaking --against ".git#branch=origin/$BASE"
+```
+
+- 0 breaking findings against the base means this PR alone is wire safe.
+- For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>"` to see the effect of the whole chain stacked on the default branch. Violations that appear only there come from other PRs in the chain: report them separately from this PR's own.
+- Missing `reserved`, deleted enum values and changed field types are detected mechanically by `buf breaking`. Cross-check them against the "Need for reserved" item below.
+
+### 4. Review checklist
+
+Report only the items with problems.
 
 #### AIP compliance (https://google.aip.dev/)
 
 | Aspect | What to check |
 |------|------------|
-| Naming | Field names are snake_case, message names are PascalCase |
-| Request/Response suffix | The input and output messages of an RPC have the `Request`/`Response` suffix |
-| enum UNSPECIFIED | The 0th value of an enum is defined as `_UNSPECIFIED` |
-| enum prefix | Enum values are prefixed with the SNAKE_CASE of the enum name (for example `STATUS_ACTIVE`) |
+| Naming (AIP-140) | Field names are lower_snake_case, message names are PascalCase |
+| Request/Response messages | The input and output messages of an RPC follow the `<Method>Request` / `<Method>Response` convention (buf lint rules `RPC_REQUEST_STANDARD_NAME` and `RPC_RESPONSE_STANDARD_NAME`) |
+| enum UNSPECIFIED (AIP-126) | The 0th value of an enum is `<ENUM_NAME>_UNSPECIFIED` |
+| enum prefix (AIP-126) | Enum values are prefixed with the UPPER_SNAKE_CASE of the enum name (for example `STATUS_ACTIVE`) |
+| repeated naming (AIP-140) | repeated fields are plural |
 | Use of optional | `optional` is applied only to fields that are really omittable |
-| repeated naming | repeated fields are plural |
+| Backwards compatibility (AIP-180) | Existing fields and values keep their numbers, names and types |
 
 #### Consistency
 
 | Aspect | What to check |
 |------|------------|
 | Consistency with existing messages | The structure matches similar RPCs/messages in the same file (for example how `oneof` is used, field order) |
-| Field numbers | They are sequential with no gaps and do not collide with reserved numbers |
-| Need for reserved | Only field numbers that have shipped in a release of main are turned into `reserved N;` when a field is deleted. A number that was added and then removed while unmerged has zero consumers, so it needs no reserved (no wire accident can happen). In the comment on `reserved`, leave one line on how that number was used in the past |
-| Message reuse | Existing messages are reused appropriately (no unnecessary duplicate definitions) |
+| Field numbers | Numbers are unique within a message and do not reuse a `reserved` or previously shipped number. Gaps are fine when the numbers are `reserved` or were deliberately skipped |
+| Need for reserved | When a field is deleted, only numbers that shipped in a release of the base are turned into `reserved N;`. A number that was added and removed while unmerged has no consumers, so it needs no `reserved`. In the comment on `reserved`, leave one line on how the number was used |
+| Message reuse | Existing messages are reused where appropriate (no unnecessary duplicate definitions) |
 | Accuracy of comments | The enum value names and field names in comments match the actual definitions |
 
 #### Consistency with the design document
@@ -95,40 +115,27 @@ Review along the checklist below. Do not report items with no problem. Report on
 
 | Aspect | What to check |
 |------|------------|
-| Use of oneof | `oneof` is used where channels or types will be added in the future |
-| Avoiding breaking changes | The design does not break existing clients when extended in the future |
+| Use of oneof | `oneof` is used where variants will be added in the future |
+| Avoiding breaking changes | Future extension does not break existing clients |
 
-### 3.5. Mechanical verification with buf (run it before the visual review)
+### 5. Report the results
 
-Visually checking comment consistency and naming cannot catch wire compatibility breaks. In a repo with buf (a `buf.yaml` exists), always run the following and include the results in the review report.
+Severity levels:
 
-```bash
-# lint (naming conventions / style)
-buf lint
+- high: breaks wire or source compatibility for existing clients, or contradicts the design document in a way that changes behavior
+- medium: violates an AIP rule or the file's own conventions, and will cost a migration to fix later
+- low: naming, comment or style issues with no compatibility effect
 
-# detect format drift (with --exit-code for a CI-equivalent check if this is for a commit)
-buf format --diff --exit-code
-
-# wire breaking check - the base is origin/$BASE decided in Step 1
-buf breaking --against ".git#branch=origin/$BASE"
-```
-
-Guidelines for judging:
-
-- If `buf breaking` finds 0 against the base, that PR alone is wire safe.
-- If the base is not main (a chain PR), also running `--against .git#branch=main` shows the breaking changes when the whole chain is stacked on main. Violations that appear here are often caused by a downstream PR (a revert, for example), so always separate whether they are inside this PR's diff or come from a downstream PR, and report that (in the per-scope summary of Step 4).
-- Missing `reserved`, deleted enum values, changed field types and so on are detected mechanically by the breaking check, so cross-check them against the visual "Need for reserved" check.
-
-### 4. Report the results
-
-Report in the following format. For each finding, always state "Applies to: inside the PR diff / pre-existing on main (outside the diff)":
+For each finding, state whether it applies inside the PR diff or is pre-existing on the base.
 
 ````markdown
 ## Proto Review result
 
+Checked: buf lint / format / breaking, AIP compliance, consistency, design document, extensibility.
+
 ### Problems
 
-**1. [Title of the problem] (severity: high/medium/low, applies to: inside the PR diff / pre-existing on main)**
+#### 1. [Title of the problem] (severity: high/medium/low, applies to: inside the PR diff / pre-existing on the base)
 
 [Explanation]
 
@@ -140,21 +147,10 @@ Report in the following format. For each finding, always state "Applies to: insi
 [proposed fix]
 ```
 
-### No problems
-
-| Aspect | Verdict |
-|------|------|
-| [check item] | OK |
-| ... | ... |
-````
-
-It is easier to read if inside/outside the diff is summarized at the end:
-
-```markdown
 ### Summary by scope
 
-- **Inside this PR's diff (fix recommended)**: 1, 2, 4
-- **Pre-existing on main (outside the diff -> candidates for a separate issue)**: 3, 5
-```
+- Inside this PR's diff (fix recommended): 1, 2, 4
+- Pre-existing on the base (outside the diff, candidates for a separate issue): 3, 5
+````
 
-If there are no problems, show only the "No problems" section.
+If there are no problems, write one line saying that none were found and which checks ran.
