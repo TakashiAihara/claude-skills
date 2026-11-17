@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: clean-branches
+description: Stale local branches after PRs landed; one regular merge, one multi-commit squash merge, one unmerged branch.
+context:
+  scaffold_script: scaffold.sh

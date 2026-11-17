@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: proto-review
+description: Proto change with a dropped shipped field, a new enum without UNSPECIFIED, off-convention RPC names, a design-doc mismatch, and pre-existing violations the PR does not touch.
+context:
+  scaffold_script: scaffold.sh

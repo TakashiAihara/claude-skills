@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: pii-audit
+description: Small order service with Terraform data stores, one store known only to the code, a TTL attribute that is never enabled, and PII written to logs.
+context:
+  scaffold_script: scaffold.sh

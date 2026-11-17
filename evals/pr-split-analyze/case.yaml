@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: pr-split-analyze
+description: A 2000-line branch (plus a 4000-line lockfile) across migration, infra, service code, tests and docs; the user wants a split plan only.
+context:
+  scaffold_script: scaffold.sh

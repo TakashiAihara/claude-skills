@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: pr-chain-verify
+description: Add a verification record to each PR of a three-rung chain (alpha, beta, gamma) with a cascade rebase.
+context:
+  scaffold_script: scaffold.sh

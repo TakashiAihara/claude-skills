@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: pr-split-execute
+description: Carry out an approved three-part split of feature/orders (PR #40) with an offline gh stand-in.
+context:
+  scaffold_script: scaffold.sh

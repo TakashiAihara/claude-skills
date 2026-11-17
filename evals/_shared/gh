@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# Offline stand-in for the GitHub CLI used by the eval scaffolds: logs every call to
+# <workspace>/.gh-calls.log (one line per call) and answers from prs.json beside it.
+import json, os, re, shutil, subprocess, sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+root = os.path.dirname(here)
+argv = sys.argv[1:]
+
+with open(os.path.join(root, ".gh-calls.log"), "a") as log:
+    log.write(" ".join(a.replace("\n", " ") for a in argv) + "\n")
+
+meta = json.load(open(os.path.join(here, "prs.json")))
+prs = meta["prs"]
+
+
+def flag(name):
+    for i, a in enumerate(argv):
+        if a == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def fail(msg, code=1):
+    sys.stderr.write(msg + "\n")
+    sys.exit(code)
+
+
+if argv[:2] == ["pr", "view"]:
+    positional = [a for a in argv[2:] if not a.startswith("-")]
+    number = next((p for p in positional if p.isdigit()), None)
+    if number is None or number not in prs:
+        fail("no pull requests found for the current branch")
+    fields = (flag("--json") or "number").split(",")
+    data = {f: prs[number].get(f) for f in fields}
+    jq, template = flag("--jq"), flag("--template")
+    if jq:
+        if not shutil.which("jq"):
+            fail("stub gh: jq is required for --jq")
+        sys.stdout.write(subprocess.run(["jq", "-r", jq], input=json.dumps(data), text=True, capture_output=True).stdout)
+    elif template:
+        out = re.sub(r"\{\{\.(\w+)\}\}", lambda m: str(data.get(m.group(1), "")), template)
+        sys.stdout.write(out.replace('{{"\\n"}}', "\n"))
+    else:
+        print(json.dumps(data))
+elif argv[:2] == ["pr", "create"]:
+    counter = os.path.join(root, ".gh-next")
+    n = int(open(counter).read()) if os.path.exists(counter) else meta["next_pr"]
+    open(counter, "w").write(str(n + 1))
+    print("https://github.com/example/shop/pull/%d" % n)
+elif argv[:2] == ["pr", "checks"]:
+    fail("no checks reported on the branch")
+elif argv[:2] in (["pr", "edit"], ["pr", "close"], ["pr", "comment"], ["pr", "ready"], ["pr", "list"]):
+    pass
+else:
+    fail("stub gh: unsupported command: " + " ".join(argv))
