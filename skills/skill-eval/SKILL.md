@@ -114,6 +114,7 @@ The error texts below were observed on Linux runs (WSL2 and LXC containers), not
 
 ## Report
 
+- One line saying what the numbers are (each score is the weighted share of graders met, 0 to 1; Δ is with minus without), placed with the table so a reader does not have to ask.
 - A table of case, with, without, Δ and fired, the run count, model and Claude Code version, and the commit the suite ran on (commit the skill edits first, so the commit describes what was measured).
 - The behaviors the baseline missed, from the failed graders.
 - What the scores cannot show (noise at this run count, format graders, cases where both arms tie).
