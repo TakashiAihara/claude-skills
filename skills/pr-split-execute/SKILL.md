@@ -158,7 +158,7 @@ Merge PR #<part2> once its checks pass, then repeat for the next part.
 
 ## Rolling back a part
 
-Put one part back at its backup tip, remote and local, and its PR back on the previous part. The push is leased to the SHA recorded before the step 6 push (`refs/pushed/<part>`), not to `origin/<part>`, so a push by someone else afterwards is refused instead of overwritten. A part without that ref was never rebased or pushed by step 6, but its remote must still equal `backup/<part>`; if someone else moved it, stop. If the step 6 push failed or was interrupted the ref can name a tip the remote never received, so the remote's actual tip decides (`git ls-remote origin refs/heads/<part>`): equal to `backup/<part>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<part>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop. The PR base is reverted only after the branch was restored.
+Put one part back at its backup tip, remote and local, and its PR back on the previous part. The push is leased to the SHA recorded before the step 6 push (`refs/pushed/<part>`), not to `origin/<part>`, so a push by someone else afterwards is refused instead of overwritten. A part without that ref was never rebased or pushed by step 6, but its remote must still equal `backup/<part>`; if someone else moved it, stop. If the step 6 push failed or was interrupted the ref can name a tip the remote never received, so the remote's actual tip decides (`git ls-remote origin refs/heads/<part>`): equal to `backup/<part>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<part>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop. The PR base is reverted only after the branch was restored. If the previous part's branch was deleted after its PR merged (automatic head-branch deletion), it is first recreated from `backup/<previous part>`, because GitHub cannot retarget a PR to a branch that does not exist.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
@@ -172,6 +172,7 @@ elif [ -n "$p" ] && [ "$remote" = "$p" ]; then git push --force-with-lease="refs
 fi
 [ -n "$ok" ] \
   && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
+  && { git ls-remote --exit-code --heads origin "$PREV" >/dev/null || git push origin "backup/${PREV}:refs/heads/${PREV}"; } \
   && gh pr edit <NEXT-pr-number> --base "$PREV" \
   || echo "STOP: could not restore ${b}"
 ```

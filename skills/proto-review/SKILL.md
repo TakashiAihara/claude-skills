@@ -18,6 +18,7 @@ In a middle PR of a PR chain the base is not the default branch, so diffing agai
 ```bash
 git fetch origin || echo "STOP: fetch failed, ask the user for the base branch"
 BASE=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null)
+[ -n "$BASE" ] || echo "NOTE: no PR base from gh; using the default branch, which is wrong for a middle PR of a chain: ask the user to confirm the base if this branch is in a chain"
 BASE=${BASE:-$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')}
 if [ -z "$BASE" ]; then
   echo "STOP: base branch unknown, ask the user"
@@ -79,7 +80,8 @@ buf format --diff --exit-code
 buf breaking --against ".git#branch=origin/$BASE,ref=$(git merge-base "origin/$BASE" HEAD)"
 ```
 
-- 0 breaking findings against the merge base means this PR alone is wire safe.
+- 0 findings means no breaking change under the rules `buf.yaml` enables, so it is not a wire-safety guarantee by itself: a config can drop rules (`except`) or paths (`ignore`). `buf config ls-breaking-rules --configured-only` lists the rules that run. In the report, name the rule categories that ran and the module checked, and call the result wire safe only when the enabled rules still include the `WIRE` ones.
+- When `buf.yaml` is below the repository root, `.git` is not found from the module directory. Run the same check from the module directory with the root `.git` and the module path as `subdir`: `buf breaking --against "$(git rev-parse --show-cdup).git#branch=origin/$BASE,ref=$(git merge-base "origin/$BASE" HEAD),subdir=$(git rev-parse --show-prefix)"` (the empty `subdir=` printed at the repository root is rejected, so use this form only below it).
 - `buf lint` and `buf format` check the whole module, not just the diff: apply the same inside-the-diff / pre-existing split of step 2 to their findings.
 - For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>,ref=$(git merge-base "origin/<default branch>" HEAD)"` to see the effect of the whole chain stacked on the default branch. A violation that appears only there is not automatically another PR's: check whether this PR's added lines are involved (for example it reuses a number or name that an earlier PR in the chain freed) before attributing it elsewhere, and report the rest separately from this PR's own.
 - Missing `reserved`, deleted enum values and changed field types are detected mechanically by `buf breaking`. Cross-check them against the "Need for reserved" item below.
@@ -97,7 +99,7 @@ Report only the items with problems.
 | enum UNSPECIFIED (AIP-126) | The 0th value of an enum is `<ENUM_NAME>_UNSPECIFIED` |
 | enum prefix (AIP-126) | Enum values are prefixed with the UPPER_SNAKE_CASE of the enum name (for example `STATUS_ACTIVE`) |
 | repeated naming (AIP-140) | repeated fields are plural |
-| Use of optional | `optional` is applied only to fields that are really omittable |
+| Use of optional | `optional` tracks field presence, not whether the API requires the field. Keep it where an unset value must be told from the default (a required `bool` whose `false` differs from unset still needs it); express requiredness with field behavior annotations or validation |
 | Backwards compatibility (AIP-180) | Existing fields and values keep their numbers, names and types |
 
 #### Consistency
@@ -115,7 +117,7 @@ Report only the items with problems.
 | Aspect | What to check |
 |------|------------|
 | Field match | Fields in the design document exist in the proto (and vice versa) |
-| Required/optional match | Required/optional in the design document matches `optional` in the proto |
+| Required/optional match | Required/optional in the design document is expressed in the proto (field behavior or validation; `optional` only where presence matters) |
 | Type match | The design document's description does not contradict the proto field type |
 | Naming match | Names in the design document (enum values, etc.) match the actual names in the proto |
 

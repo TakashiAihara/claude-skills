@@ -49,6 +49,7 @@ for b in <A> <B> <C> ...; do
 done
 
 # Record every branch's original tip (these refs are also the rollback source)
+# Run this loop only when nothing above printed. If a check printed after the loop already ran, delete the backups it made (git branch -D "backup/<b>" for each) before step 0 is run again, or the rerun stops on them and the old tips stay recorded
 for b in <X> <A> <B> <C> ...; do
   # An existing backup is an earlier rollback point: stop and ask the user instead of overwriting it
   git branch --no-track "backup/${b}" "origin/${b}" || echo "STOP: backup/${b} exists or cannot be created"
@@ -56,7 +57,7 @@ for b in <X> <A> <B> <C> ...; do
 done
 ```
 
-If X is behind BASE, either bring X up to date first (rebase X onto `origin/$BASE` and push it with a lease; ask X's owner if it is not yours), then run step 0 again, or accept it: step 2 then prints `NOT STACKED X on origin/$BASE`, which is expected.
+If X is behind BASE, either bring X up to date first (rebase X onto `origin/$BASE` and push it with a lease; ask X's owner if it is not yours), delete the backups the first run made, then run step 0 again, or accept it: step 2 then prints `NOT STACKED X on origin/$BASE`, which is expected.
 
 ### 1. Rebuild the chain, root first
 

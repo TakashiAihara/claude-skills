@@ -126,6 +126,7 @@ The list of data recognized as personal information or equivalent. See the detai
 - Encryption and backup settings
 - Lifecycle / TTL
 - Whether data is returned to callers
+- Third-party provision: yes (recipient and data items) or none found
 ```
 
 Example entry:
@@ -142,6 +143,7 @@ Example entry:
 - Encryption and backup: SSE with AWS-managed key, PITR on
 - Lifecycle / TTL: the setting found in the infra code, or "none found"
 - Returned to callers: yes (all items)
+- Third-party provision: none found
 ```
 
 ## Workflow
@@ -182,10 +184,13 @@ Use the scope the user gave in step 0.
 
 ### 6. Check the logs
 
-Check that PII is not written to application logs, log delivery streams, or load-balancer and CDN access logs. Grep for logging of request bodies, headers, source IP, User-Agent and email, not for every logger call. A logger call that passes an object (`logger.info({ user })`) must be followed to the object's fields: the keyword grep only sees the call line, not what the object holds:
+Check that PII is not written to application logs, log delivery streams, or load-balancer and CDN access logs. Grep for logging of request bodies, headers, source IP, User-Agent and email, not for every logger call. A logger call that passes an object (`logger.info({ user })`) or a variable (`logger.info(user)`) must be followed to the fields it holds: the keyword grep only sees the call line, so list those calls with the second grep and read each one's object or variable:
 
 ```bash
 git grep -nIiE '(log|logger|console|print)[A-Za-z_.]*\(.*(body|headers|remote_?addr|\bip\b|user-?agent|x-forwarded-for|email)'
+
+# Calls whose first argument is an object literal or a bare variable (arguments on the next line are not matched)
+git grep -nIE '(log|logger|console|print)[A-Za-z_.]*\([[:space:]]*(\{|[A-Za-z_][A-Za-z_.]*[[:space:]]*[,)])'
 ```
 
 Also check the access log settings of the load balancer and CDN in the infra code: those logs are in scope, not just application logs.

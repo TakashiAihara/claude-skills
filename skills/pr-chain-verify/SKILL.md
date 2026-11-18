@@ -45,7 +45,7 @@ Order the chain from root to leaf. Handle independent PRs (based on the default 
 
 ### 3. File template
 
-Fill in only what was observed. A row that was not run says `not run`, never a pass. Before the push `gh pr checks` still reports the old head, so the CI row is `not run` unless the rebased head was pushed and CI finished on it.
+Fill in only what was observed. A row that was not run says `not run`, never a pass. A result copied from an existing results file was observed on the pre-rebase head: re-run it on the rebased head, or write `not run` (or "observed before the rebase") instead of `pass`. Before the push `gh pr checks` still reports the old head, so the CI row is `not run` unless the rebased head was pushed and CI finished on it.
 
 ```markdown
 # Test result: #<PR number> <PR title>
@@ -82,9 +82,6 @@ for BR in <every branch that gets a commit>; do
   if git rev-parse -q --verify "refs/heads/${BR}" >/dev/null && [ -n "$(git rev-list "origin/${BR}..${BR}")" ]; then
     echo "UNPUSHED commits on ${BR}: stop and ask"
   fi
-  # Original tips: the rollback source, the lease value and the old parent for the next rung
-  # An existing backup is an earlier rollback point: stop and ask the user instead of overwriting it
-  git branch --no-track "backup/${BR}" "origin/${BR}" || echo "STOP: backup/${BR} exists or cannot be created"
 done
 
 # Merge commits in a rung's own range would be flattened by its rebase: any MERGE COMMITS line is a stop condition
@@ -93,6 +90,13 @@ for BR in <chain branches, root to leaf>; do
   m=$(git rev-list --merges "${prev}..origin/${BR}") || echo "STOP: rev-list failed for ${BR}"
   [ -z "$m" ] || echo "MERGE COMMITS in ${BR}: stop and ask"
   prev="origin/${BR}"
+done
+
+# Original tips: the rollback source, the lease value and the old parent for the next rung
+# Run this loop only when nothing above printed. If a check printed after the loop already ran, delete the backups it made (git branch -D "backup/<branch>" for each) before the pre-flight is run again, or the rerun stops on them and the old tips stay recorded
+for BR in <every branch that gets a commit>; do
+  # An existing backup is an earlier rollback point: stop and ask the user instead of overwriting it
+  git branch --no-track "backup/${BR}" "origin/${BR}" || echo "STOP: backup/${BR} exists or cannot be created"
 done
 ```
 
@@ -130,7 +134,7 @@ git add "$VFILE" && git commit -m "docs(test-results): add verification record f
   && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR"
 ```
 
-If different people own different rungs, use the owner-aware procedure in pr-chain-reorder-head instead of pushing every rung yourself.
+If different people own different rungs, use the owner-aware procedure in pr-chain-reorder-head instead of pushing every rung yourself, and also ask each owner to write the verification file at that PR's `<vfile>`, commit it and push it (that procedure only covers the base and the rebase; step 7 needs the file on every branch).
 
 ### 6. Commit to independent PRs (default-branch-based / independent release branches)
 
