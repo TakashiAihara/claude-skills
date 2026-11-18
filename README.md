@@ -33,9 +33,10 @@ npx skills add TakashiAihara/claude-skills
 
 ## Evals
 
-`evals/` holds one `claude plugin eval` case per skill (except animated-step-slides). Each case runs the same request with and without the plugin and scores the result; git cases build a throwaway repo with a local bare `origin` in `scaffold.sh`. The PR-chain and PR-split cases (`pr-chain-reorder-head`, `pr-chain-verify`, `pr-split-execute`) send their `gh` calls to an offline stand-in (`evals/_shared/gh`, which needs `python3` and `jq` on the host); the other git cases (including `clean-branches`) are git-only and do not use it. Graders check observable results with regex and file checks, and they cannot verify file contents inside git objects, so a few checks are presence-based (for example, a pushed branch ref exists).
+`evals/` holds one `claude plugin eval` case for each of the nine git, PR and test skills (animated-step-slides and skill-eval have none). Each case runs the same request with and without the plugin and scores the result; git cases build a throwaway repo with a local bare `origin` in `scaffold.sh`. The PR-chain and PR-split cases (`pr-chain-reorder-head`, `pr-chain-verify`, `pr-split-execute`) send their `gh` calls to an offline stand-in (`evals/_shared/gh`, which needs `python3` and `jq` on the host); the other git cases (including `clean-branches`) are git-only and do not use it. Graders check observable results with regex and file checks, and they cannot verify file contents inside git objects, so a few checks are presence-based (for example, a pushed branch ref exists).
 
 ```bash
+mkdir -p "$HOME/evaltmp"
 TMPDIR="$HOME/evaltmp" claude plugin eval . --model sonnet --scaffold --trust-plugin --allow-tools Bash Write Edit --no-publish
 ```
 
