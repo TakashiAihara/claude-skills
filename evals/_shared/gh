@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+# Offline stand-in for the GitHub CLI used by the eval scaffolds: logs every call to
+# <workspace>/.gh-calls.log (one line per call) and answers from prs.json beside it.
+# Supports pr view/list/create/edit/close/ready/comment/checks; -R/--repo is accepted and ignored.
+import json, os, re, shutil, subprocess, sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+root = os.path.dirname(here)
+raw = sys.argv[1:]
+
+with open(os.path.join(root, ".gh-calls.log"), "a") as log:
+    log.write(" ".join(a.replace("\n", " ") for a in raw) + "\n")
+
+argv, i = [], 0
+while i < len(raw):
+    if raw[i] in ("-R", "--repo"):
+        i += 2
+    elif raw[i].startswith("--repo="):
+        i += 1
+    else:
+        argv.append(raw[i])
+        i += 1
+
+prs_path = os.path.join(here, "prs.json")
+meta = json.load(open(prs_path))
+prs = meta["prs"]
+for pr in prs.values():
+    pr.setdefault("state", "OPEN")
+    pr.setdefault("isDraft", False)
+
+VALUE_FLAGS = {
+    "--json", "--jq", "-q", "--template", "--base", "-B", "--head", "-H", "--state", "-s",
+    "--title", "--body", "-b", "--body-file", "-F", "--label", "-l", "--reviewer", "-r",
+    "--assignee", "-a", "--milestone", "-m", "--limit", "-L", "--search", "-S", "--author", "-A",
+    "--add-label", "--remove-label", "--add-reviewer", "--remove-reviewer", "--comment", "-c",
+}
+# -t is --title on create/edit and --template on view/list
+VALUE_FLAGS.add("-t")
+ALIASES = {"-q": "--jq", "-B": "--base", "-H": "--head", "-s": "--state"}
+
+
+def parse(args):
+    flags, positional, i = {}, [], 0
+    sub = args[1] if len(args) > 1 else ""
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--") and "=" in a:
+            k, v = a.split("=", 1)
+            flags[ALIASES.get(k, k)] = v
+        elif a in VALUE_FLAGS and i + 1 < len(args):
+            k = a
+            if a == "-t":
+                k = "--title" if sub in ("create", "edit") else "--template"
+            flags[ALIASES.get(k, k)] = args[i + 1]
+            i += 1
+        elif a.startswith("-"):
+            flags.setdefault(ALIASES.get(a, a), True)
+        else:
+            positional.append(a)
+        i += 1
+    return flags, positional[2:]
+
+
+def fail(msg, code=1):
+    sys.stderr.write(msg + "\n")
+    sys.exit(code)
+
+
+def save():
+    with open(prs_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def current_branch():
+    r = subprocess.run(["git", "branch", "--show-current"], cwd=root, capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def resolve(target):
+    """PR number for '#N' / 'N', a head branch name, or the current branch when target is None."""
+    if target is None:
+        target = current_branch()
+    t = target.lstrip("#")
+    if t.isdigit() and t in prs:
+        return t
+    for n, pr in prs.items():
+        if pr.get("headRefName") == target:
+            return n
+    fail('no pull requests found for "%s"' % (target or "the current branch"))
+
+
+def emit(data, flags):
+    jq, template = flags.get("--jq"), flags.get("--template")
+    if jq:
+        if not shutil.which("jq"):
+            fail("stub gh: jq is required for --jq")
+        r = subprocess.run(["jq", "-r", jq], input=json.dumps(data), text=True, capture_output=True)
+        sys.stdout.write(r.stdout)
+        if r.returncode:
+            fail(r.stderr.strip(), r.returncode)
+    elif template:
+        out = re.sub(r"\{\{\.(\w+)\}\}", lambda m: str(data.get(m.group(1), "")), template)
+        sys.stdout.write(out.replace('{{"\\n"}}', "\n"))
+    else:
+        print(json.dumps(data))
+
+
+def pick(pr, fields):
+    return {f: pr.get(f) for f in fields}
+
+
+flags, positional = parse(argv)
+cmd = argv[:2]
+
+if cmd == ["pr", "view"]:
+    pr = prs[resolve(positional[0] if positional else None)]
+    emit(pick(pr, (flags.get("--json") or "number").split(",")), flags)
+elif cmd == ["pr", "list"]:
+    rows = [
+        pr for pr in prs.values()
+        if (flags.get("--head") in (None, pr.get("headRefName")))
+        and (flags.get("--base") in (None, pr.get("baseRefName")))
+        and (flags.get("--state") == "all" or pr["state"].lower() == str(flags.get("--state") or "open").lower())
+    ]
+    if flags.get("--json"):
+        fields = flags["--json"].split(",")
+        data = [pick(pr, fields) for pr in rows]
+        if flags.get("--jq"):
+            emit(data, flags)
+        else:
+            print(json.dumps(data))
+    else:
+        for pr in rows:
+            print("%s\t%s\t%s" % (pr["number"], pr.get("title", ""), pr.get("headRefName")))
+elif cmd == ["pr", "create"]:
+    counter = os.path.join(root, ".gh-next")
+    n = int(open(counter).read()) if os.path.exists(counter) else meta["next_pr"]
+    open(counter, "w").write(str(n + 1))
+    head = flags.get("--head") or current_branch()
+    prs[str(n)] = {
+        "number": n,
+        "title": flags.get("--title") or "",
+        "baseRefName": flags.get("--base") or "main",
+        "headRefName": head.split(":", 1)[-1],
+        "author": {"login": "dev"},
+        "isDraft": bool(flags.get("--draft")),
+        "state": "OPEN",
+    }
+    save()
+    print("https://github.com/example/shop/pull/%d" % n)
+elif cmd == ["pr", "checks"]:
+    fail("no checks reported on the branch")
+elif cmd == ["pr", "edit"]:
+    n = resolve(positional[0] if positional else None)
+    if flags.get("--base"):
+        prs[n]["baseRefName"] = flags["--base"]
+        save()
+elif cmd == ["pr", "close"]:
+    prs[resolve(positional[0] if positional else None)]["state"] = "CLOSED"
+    save()
+elif cmd == ["pr", "ready"]:
+    prs[resolve(positional[0] if positional else None)]["isDraft"] = False
+    save()
+elif cmd == ["pr", "comment"]:
+    pass
+else:
+    fail("stub gh: unsupported command: " + " ".join(argv))
