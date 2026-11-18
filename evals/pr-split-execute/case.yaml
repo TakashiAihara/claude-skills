@@ -1,5 +1,7 @@
 schema_version: "1.1"
 name: pr-split-execute
 description: Carry out an approved three-part split of feature/orders (PR #40) with an offline gh stand-in.
+# Graders check that the three part branches were pushed to origin and the PR calls in .gh-calls.log.
+# What each part contains is not graded: file contents inside git objects are not readable by a grader.
 context:
   scaffold_script: scaffold.sh
