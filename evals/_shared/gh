@@ -120,7 +120,7 @@ elif cmd == ["pr", "list"]:
         pr for pr in prs.values()
         if (flags.get("--head") in (None, pr.get("headRefName")))
         and (flags.get("--base") in (None, pr.get("baseRefName")))
-        and (flags.get("--state") in (None, "all") or pr["state"].lower() == str(flags["--state"]).lower())
+        and (flags.get("--state") == "all" or pr["state"].lower() == str(flags.get("--state") or "open").lower())
     ]
     if flags.get("--json"):
         fields = flags["--json"].split(",")

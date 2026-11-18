@@ -40,4 +40,5 @@ TMPDIR="$HOME/evaltmp" claude plugin eval . --model sonnet --scaffold --trust-pl
 
 - `--scaffold` runs the case scripts in `evals/*/scaffold.sh` as you; read them first.
 - Linux: point `TMPDIR` outside `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm` (create the directory first). Otherwise the sandbox denies every Bash write in the run's workspace, and the git cases fail in both arms ([anthropics/claude-code#104631](https://github.com/anthropics/claude-code/issues/104631)).
+- The trace graders are regular expressions over the recorded shell commands, not a shell parser: a command inside a quoted string (for example in `echo` or `grep`) can match, and unusual spellings (git global options, quoted `+refspec`) can slip past. Read a failing run's trace before trusting a score.
 - Granting Bash needs a working sandbox (bubblewrap and socat on Linux). It does not start in an unprivileged container that cannot create a nested user namespace, nor when `~/.ssh` contains symlinks.
