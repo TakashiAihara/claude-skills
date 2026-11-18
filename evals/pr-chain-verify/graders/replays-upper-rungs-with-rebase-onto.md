@@ -1,5 +1,5 @@
 ---
 type: regex
 target: trace
-pattern: '"command":\s*"[^"]*git rebase[^"]*--onto'
+pattern: '"command":\s*"(?:[^"\\]|\\.)*git (?:-c \S+ )*rebase(?:[^"\\]|\\.)*--onto'
 ---

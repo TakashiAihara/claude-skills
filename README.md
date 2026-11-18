@@ -29,3 +29,15 @@ As plain skills for any agent that reads `SKILL.md`:
 ```bash
 npx skills add TakashiAihara/claude-skills
 ```
+
+## Evals
+
+`evals/` holds one `claude plugin eval` case per skill (except animated-step-slides). Each case runs the same request with and without the plugin and scores the result; git cases build a throwaway repo with a local bare `origin` in `scaffold.sh`, and the `gh` calls go to an offline stand-in (`evals/_shared/gh`).
+
+```bash
+TMPDIR="$HOME/evaltmp" claude plugin eval . --model sonnet --scaffold --trust-plugin --allow-tools Bash Write Edit --no-publish
+```
+
+- `--scaffold` runs the case scripts in `evals/*/scaffold.sh` as you; read them first.
+- Linux: point `TMPDIR` outside `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm` (create the directory first). Otherwise the sandbox denies every Bash write in the run's workspace, and the git cases fail in both arms ([anthropics/claude-code#104631](https://github.com/anthropics/claude-code/issues/104631)).
+- Granting Bash needs a working sandbox (bubblewrap and socat on Linux). It does not start in an unprivileged container that cannot create a nested user namespace, nor when `~/.ssh` contains symlinks.

@@ -1,5 +1,5 @@
 ---
 type: regex
 target: trace
-pattern: 'git push[^"]*--force-with-lease=\\?"?\$?[\w{}/]+:'
+pattern: '"command":\s*"(?:[^"\\]|\\.)*git push(?:[^"\\]|\\.)*--force-with-lease=(?:\\")?[^\s:"\\]+:[^\s"\\]'
 ---
