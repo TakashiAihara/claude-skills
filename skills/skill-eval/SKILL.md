@@ -12,14 +12,14 @@ Requirements: Claude Code 2.1.269 or later (`claude plugin eval`); `git` 2.31 or
 ## What the numbers mean
 
 - A run's score is the weighted share of scored graders that passed (0 to 1). Graders marked with-only (such as `tool_used: Skill`) are reported as a firing indicator and do not enter the score.
-- `with` and `without` are the mean scores over the runs of each arm; `Δ` is with minus without. The CLI has no "fired" column: count it yourself as the with-arm runs in which the with-only `tool_used: Skill` grader passed (in the JSON it is the grader with `scored: false`).
+- `with` and `without` are the mean scores over the runs of each arm; `Δ` is with minus without. The CLI has no "fired" column: count it yourself as the with-arm runs in which the with-only `tool_used: Skill` grader passed (select it by its grader name, since other with-only graders are also `scored: false`).
 - What a result tells you:
   - Fired below the run count: the description may not trigger on that request, or the request did not need the skill; check which before rewriting the description.
   - Positive Δ: the behaviors the baseline misses are the skill's contribution. Name them from the failed graders, not from the number.
   - Δ of 0 with both arms at 1.00: the case is easy enough that the model solves it alone. It does not show the skill is useless; add a harder scenario before concluding.
   - Negative Δ: the skill adds steps, asks instead of acting, or a grader checks something the skill does differently; read the with-arm's failed graders before trusting the sign.
   - Both arms failing the same graders in the same way: suspect the environment or the graders before the skill (see Diagnose).
-- A run's score moves in steps of 1/N for N scored graders, and the docs call a single run noisy; with 3 runs per arm, treat a difference of about one grader's weight as noise (an observation, not a documented threshold). A grader that checks the skill's own output format lowers the baseline for format alone; say so when reporting.
+- With N equally weighted scored graders a run's score moves in steps of 1/N (with weights, in steps of each grader's share), and the docs call a single run noisy; with 3 runs per arm, treat a difference of about one grader's weight as noise (an observation, not a documented threshold). A grader that checks the skill's own output format lowers the baseline for format alone; say so when reporting.
 
 ## Workflow
 
@@ -76,7 +76,7 @@ input_match: '"skill"\s*:\s*"(?:[\w-]+:)?<skill name>"'
 
 - Run every regex against hand-written positive and negative samples in Node (`new RegExp(pattern, flags)`), since the harness uses JavaScript regex. Put flags in `flags: i` / `flags: m`, not inline `(?i)`, and single-quote patterns in the frontmatter so YAML keeps `\s` and `\\`.
 - Parse every grader's frontmatter as YAML, and run `claude plugin validate .`.
-- Run the scaffold once by hand and confirm the state the graders expect is absent before the run.
+- Run the scaffold once by hand in an empty temporary directory (`d=$(mktemp -d) && cd "$d" && bash <plugin>/evals/<case>/scaffold.sh`; never in the plugin repo, where it would rewrite that repo's git config) and confirm the state the graders expect is absent before the run.
 
 ### 6. Run
 
@@ -95,6 +95,7 @@ TMPDIR="$HOME/evaltmp" claude plugin eval . --runs 3 -j 2 --model sonnet --scaff
 
 ### 7. Read the results per grader
 
+- Check every run's `error` first: a run that ended on an API or harness error scores 0 with no grader results and is not marked partial. Rerun those before summarizing.
 - Summarize per case: with, without, Δ, fired, and the failed graders counted per arm. The JSON has `cases[].aggregates` and `cases[].arms.{with,without}[].graders[]`.
 - A grader failing in the with-arm on every run is usually a grader that no longer matches the skill; compare it with the commands in a kept trace before editing the skill.
 - After changing a skill, re-read the graders that match its commands.
