@@ -14,6 +14,7 @@ General-purpose Claude Code skills, published as the `skills` plugin of the `tak
 | [pr-split-execute](skills/pr-split-execute/SKILL.md) | Execute an approved PR split: backup, split branches, chained draft PRs, merge order |
 | [proto-review](skills/proto-review/SKILL.md) | Review protobuf files for AIP compliance and wire safety, scoped to the PR diff, with buf checks |
 | [rebase-safe](skills/rebase-safe/SKILL.md) | Rebase onto the base branch, auto-resolving documentation conflicts and asking about the rest |
+| [skill-eval](skills/skill-eval/SKILL.md) | Write and run `claude plugin eval` cases that compare a skill with the same model without it, and read the scores |
 
 ## Install
 
