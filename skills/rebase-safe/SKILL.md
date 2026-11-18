@@ -121,7 +121,7 @@ git diff --name-only --diff-filter=U
 
 ```bash
 if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
-  if git diff --cached --quiet; then git rebase --skip; else GIT_EDITOR=true git rebase --continue; fi
+  if git diff --cached --quiet; then git -c rerere.enabled=false rebase --skip; else GIT_EDITOR=true git -c rerere.enabled=false rebase --continue; fi
 else
   echo "unresolved files remain: do not continue" >&2
 fi

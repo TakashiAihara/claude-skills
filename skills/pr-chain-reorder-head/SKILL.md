@@ -127,7 +127,7 @@ Then run workflow_dispatch (or the relevant check) on the leaf to confirm it wor
 
 ## Rolling back
 
-Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored. A push can fail or be interrupted after the ref was recorded, so the ref is never deleted for that reason; the remote's actual tip decides (`git ls-remote origin refs/heads/<b>`): equal to `backup/<b>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<b>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop.
+Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed by this procedure, but its remote must still equal `backup/<b>`; if someone else moved it, stop. A push can fail or be interrupted after the ref was recorded, so the ref is never deleted for that reason; the remote's actual tip decides (`git ls-remote origin refs/heads/<b>`): equal to `backup/<b>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<b>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
@@ -138,8 +138,8 @@ for b in <A> <B> <C> ...; do
   ok=
   p=$(git rev-parse -q --verify "refs/pushed/${b}") || p=
   remote=$(git ls-remote origin "refs/heads/${b}" | cut -f1)
-  if [ -z "$p" ] || [ "$remote" = "$(git rev-parse "backup/${b}")" ]; then ok=1
-  elif [ "$remote" = "$p" ]; then git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}" && ok=1
+  if [ "$remote" = "$(git rev-parse "backup/${b}")" ]; then ok=1
+  elif [ -n "$p" ] && [ "$remote" = "$p" ]; then git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}" && ok=1
   fi
   [ -n "$ok" ] \
     && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
