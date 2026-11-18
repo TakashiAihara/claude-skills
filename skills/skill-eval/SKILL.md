@@ -76,7 +76,7 @@ input_match: '"skill"\s*:\s*"(?:[\w-]+:)?<skill name>"'
 
 - Run every regex against hand-written positive and negative samples in Node (`new RegExp(pattern, flags)`), since the harness uses JavaScript regex. Put flags in `flags: i` / `flags: m`, not inline `(?i)`, and single-quote patterns in the frontmatter so YAML keeps `\s` and `\\`.
 - Parse every grader's frontmatter as YAML, and run `claude plugin validate .`.
-- Run the scaffold once by hand in an empty temporary directory (`d=$(mktemp -d) && cd "$d" && bash <plugin>/evals/<case>/scaffold.sh`; never in the plugin repo, where it would rewrite that repo's git config) and confirm the state the graders expect is absent before the run.
+- Run the scaffold once by hand in an empty temporary directory, in a subshell so your shell stays in the plugin root (`(d=$(mktemp -d) && cd "$d" && bash /abs/path/to/plugin/evals/<case>/scaffold.sh && ls -a)`; never in the plugin repo, where it would rewrite that repo's git config), and confirm the state the graders expect is absent before the run.
 
 ### 6. Run
 
