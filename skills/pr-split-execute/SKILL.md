@@ -172,7 +172,7 @@ elif [ -n "$p" ] && [ "$remote" = "$p" ]; then git push --force-with-lease="refs
 fi
 [ -n "$ok" ] \
   && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
-  && { git ls-remote --exit-code --heads origin "$PREV" >/dev/null || git push origin "backup/${PREV}:refs/heads/${PREV}"; } \
+  && { git ls-remote --exit-code origin "refs/heads/${PREV}" >/dev/null || git push origin "backup/${PREV}:refs/heads/${PREV}"; } \
   && gh pr edit <NEXT-pr-number> --base "$PREV" \
   || echo "STOP: could not restore ${b}"
 ```
