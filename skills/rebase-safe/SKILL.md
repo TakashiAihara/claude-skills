@@ -32,6 +32,8 @@ BASE=${BASE_BRANCH:-$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/nul
 [ -n "$BASE" ] || { BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD) && BASE=${BASE#origin/}; }
 git fetch origin || echo "fetch failed" >&2
 ORIG=$(git rev-parse HEAD)
+# An existing backup is an earlier rollback point: stop and ask instead of overwriting it
+git branch --no-track "backup/$BR" "$ORIG" || echo "STOP: backup/$BR exists or cannot be created"
 echo "merge commits in the rewrite range:"; git rev-list --merges "origin/$BASE..HEAD"
 REMOTE_SHA=$(git rev-parse --verify -q "origin/$BR")
 [ -z "$REMOTE_SHA" ] || { echo "unpushed:"; git rev-list "origin/$BR..HEAD"; echo "remote-only:"; git rev-list "HEAD..origin/$BR"; }
@@ -44,7 +46,7 @@ echo "BR=$BR BASE=$BASE ORIG=$ORIG REMOTE_SHA=$REMOTE_SHA"
 - Stop if anything is listed under `remote-only:`: someone pushed commits the local branch lacks, and a force push would drop them
 - Commits listed under `unpushed:` would be rewritten and pushed too; continue only on explicit confirmation
 - If `REMOTE_SHA` is empty, `origin/$BR` does not exist and there is nothing to force-push: use a plain `git push -u origin "HEAD:refs/heads/$BR"` in step 5 instead
-- Create the backup ref and keep it until the user confirms the result: `git branch "backup/$BR" "$ORIG"`. If that ref already exists, stop and ask
+- The block created `backup/$BR` at `ORIG`; keep it until the user confirms the result. A `STOP:` line from the backup (the ref already exists, or `BR` is empty) means stop and ask the user
 
 ### 2. Start the rebase
 

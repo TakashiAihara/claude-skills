@@ -30,7 +30,7 @@ head -20 docs/test-results/<sample>.md
 
 If nothing is found, ask the user where to put the files. Names are usually a short slug rather than the PR number (for example `feature-a.md`, `feature-b.md`).
 
-Fix the verification file path of every PR here (`<vfile>` below); steps 5 to 7 use exactly that path.
+Fix the verification file path of every PR here (`<vfile>` below), and give each PR its own path: step 7 requires that the PR's own commits add the file, so a path shared with another PR fails. Steps 5 to 7 use exactly that path.
 
 ### 2. Organize the PR list
 
@@ -106,8 +106,9 @@ git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --no-update-re
 
 # If the chain above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
 git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
-  && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR" \
-  && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")"   # the pushed tip is the rollback lease
+  && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")" \
+  && { git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR" || { git update-ref -d "refs/pushed/${BR}"; false; }; }
+# refs/pushed is the rollback lease: recorded before the push, deleted if the push fails
 ```
 
 If `git rebase` stops on a conflict, stop the cascade: resolve it as described under "Handling conflicts" in the pr-chain-reorder-head skill (`git diff --check`, `git add`, `git rebase --continue`), or run `git rebase --abort` and ask the user. Nothing has been pushed for that rung yet.
@@ -125,7 +126,8 @@ VFILE="<vfile>"
 git switch "$BR" && git reset --hard "origin/${BR}"
 # If the line above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
 git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
-  && git push origin "$BR" && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")"
+  && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")" \
+  && { git push origin "$BR" || { git update-ref -d "refs/pushed/${BR}"; false; }; }
 ```
 
 ### 7. Verify chain integrity
@@ -140,7 +142,7 @@ while read -r pr br parent vfile; do
   [ "$(gh pr view "$pr" --repo <owner/repo> --json baseRefName --jq .baseRefName)" = "$parent" ] || echo "WRONG PR BASE: #${pr} should target ${parent}"
   git cat-file -e "origin/${br}:${vfile}" || echo "MISSING FILE: ${vfile} on ${br}"
   [ "$(git cat-file -s "origin/${br}:${vfile}")" -gt 0 ] || echo "EMPTY FILE: ${vfile} on ${br}"
-  git show "origin/${br}:${vfile}" | grep -qF "#${pr}" || echo "FILE DOES NOT MENTION #${pr}: ${vfile} on ${br}"
+  git show "origin/${br}:${vfile}" | grep -qE "#${pr}([^0-9]|$)" || echo "FILE DOES NOT MENTION #${pr}: ${vfile} on ${br}"
   # The file must be added by this branch's own commits, not inherited from a parent
   [ -n "$(git diff --name-only --diff-filter=A "origin/${parent}...origin/${br}" -- "$vfile")" ] || echo "FILE NOT ADDED BY ${br}: ${vfile}"
   gh pr view "$pr" --repo <owner/repo> --json number,mergeable,mergeStateStatus \

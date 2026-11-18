@@ -25,8 +25,8 @@ CURRENT=$(git branch --show-current)
 # Base: the PR's base if there is a PR, otherwise the remote default branch
 BASE_BRANCH=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null) || BASE_BRANCH=
 [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##')
-# Stop and ask the user if this prints STOP: the base is unknown or cannot be fetched
-[ -n "$BASE_BRANCH" ] && git fetch origin "$BASE_BRANCH" || echo "STOP: base branch empty or fetch failed"
+# Stop and ask the user if this prints STOP: detached HEAD, the base is unknown or cannot be fetched
+[ -n "$CURRENT" ] && [ -n "$BASE_BRANCH" ] && git fetch origin "$BASE_BRANCH" || echo "STOP: detached HEAD, base branch empty or fetch failed"
 
 # The working tree must be clean; stop and ask the user if this prints anything
 git status --porcelain
@@ -93,14 +93,15 @@ Create the PRs in dependency order, then record every part's tip as a backup ref
 
 ```bash
 # Part 1: base <- part1
-git push -u origin "${CURRENT}-part1"
-gh pr create --head "${CURRENT}-part1" --base "$BASE_BRANCH" --draft \
+# Each push and its gh pr create form one chain: a rejected push must not open a PR for a stale remote branch
+git push -u origin "${CURRENT}-part1" \
+  && gh pr create --head "${CURRENT}-part1" --base "$BASE_BRANCH" --draft \
   --title "<type>: <Part 1 title>" \
   --body "Part 1 of the split of #<original>. ..."
 
 # Part 2: part1 <- part2
-git push -u origin "${CURRENT}-part2"
-gh pr create --head "${CURRENT}-part2" --base "${CURRENT}-part1" --draft \
+git push -u origin "${CURRENT}-part2" \
+  && gh pr create --head "${CURRENT}-part2" --base "${CURRENT}-part1" --draft \
   --title "<type>: <Part 2 title>" \
   --body "Part 2 of the split of #<original>. Depends on #<part1-number>. ..."
 
@@ -130,26 +131,28 @@ If a part is squash-merged, the next part's branch still contains the original c
 PREV="${CURRENT}-part1"; NEXT="${CURRENT}-part2"
 # One chain: it stops at the first failing command. Replay only NEXT's own commits onto the base
 # (the old tip of PREV marks where they start), retarget, then push; the lease is pinned to NEXT's tip as it was before the rebase
+# refs/pushed/<NEXT> is recorded before the push (the rollback lease) and deleted if the push fails
 git fetch origin "$BASE_BRANCH" \
   && git switch "$NEXT" \
   && git rebase --no-update-refs --onto "origin/$BASE_BRANCH" "$(git rev-parse "backup/${PREV}")" "$NEXT" \
   && gh pr edit <NEXT-pr-number> --base "$BASE_BRANCH" \
-  && git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT"
+  && git update-ref "refs/pushed/${NEXT}" "$(git rev-parse "$NEXT")" \
+  && { git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT" || { git update-ref -d "refs/pushed/${NEXT}"; false; }; }
 ```
 
 If the rebase stops on a conflict, resolve it or run `git rebase --abort` and ask the user. Merge PR #<part2> once its checks pass, then repeat for the next part.
 
 ## Rolling back a part
 
-Put one part back at its backup tip, remote and local, and its PR back on the previous part.
+Put one part back at its backup tip, remote and local, and its PR back on the previous part. The push is leased to the SHA recorded before the step 6 push (`refs/pushed/<part>`), not to `origin/<part>`, so a push by someone else afterwards is refused instead of overwritten. A part without that ref was never rebased or pushed by step 6: its remote is untouched and only the local branch is restored. The PR base is reverted only after the branch was restored.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
 git status --porcelain
 b="$NEXT"; cur=$(git branch --show-current)
-git push --force-with-lease="refs/heads/${b}:$(git rev-parse "origin/${b}")" origin "backup/${b}:refs/heads/${b}" \
-  && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi
-gh pr edit <NEXT-pr-number> --base "$PREV"
+{ ! p=$(git rev-parse -q --verify "refs/pushed/${b}") || git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}"; } \
+  && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
+  && gh pr edit <NEXT-pr-number> --base "$PREV"
 ```
 
 ## Choosing a splitting method
@@ -162,5 +165,5 @@ gh pr edit <NEXT-pr-number> --base "$PREV"
 
 ## Notes
 
-- Keep the backup refs until the whole chain is merged; deleting them is left to the user
+- Keep the backup refs and `refs/pushed/*` refs until the whole chain is merged; deleting them is left to the user
 - If the original branch has a PR, write its number in the description of every split PR

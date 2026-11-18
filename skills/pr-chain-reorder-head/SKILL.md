@@ -25,7 +25,7 @@ Typical use case:
 
 ## Procedure
 
-Run each step in one shell session. The recorded SHAs live in the `backup/<branch>` refs (original tips) and the `refs/pushed/<branch>` refs (what step 1 pushed), so no variable has to survive between steps.
+Run each step in one shell session. The recorded SHAs live in the `backup/<branch>` refs (original tips) and the `refs/pushed/<branch>` refs (what step 1 pushed or was about to push), so no variable has to survive between steps.
 
 ### 0. Check and record
 
@@ -58,19 +58,20 @@ For each rung R in order A, B, C, ..., with P the rung below it in the new chain
 ```bash
 # rung A: P = X, old parent = origin/$BASE
 # One chain per rung: a stopped rebase must not retarget the PR or push. --no-update-refs keeps rebase.updateRefs from moving backup/* or other rungs
-# The retarget comes before the push so the PR never shows X's commits as its own; refs/pushed/<A> records what was pushed (the rollback lease)
+# The retarget comes before the push so the PR never shows X's commits as its own
+# refs/pushed/<A> is recorded before the push (the rollback lease) and deleted if the push fails, so an interruption never leaves a pushed tip unrecorded
 git switch <A> \
   && git rebase --no-update-refs --onto <X> "origin/$BASE" <A> \
   && gh pr edit <PR number of A> --base <X> \
-  && git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A> \
-  && git update-ref refs/pushed/<A> "$(git rev-parse <A>)"
+  && git update-ref refs/pushed/<A> "$(git rev-parse <A>)" \
+  && { git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A> || { git update-ref -d refs/pushed/<A>; false; }; }
 
 # rung B: P = A, old parent = backup/A
 git switch <B> \
   && git rebase --no-update-refs --onto <A> "$(git rev-parse backup/<A>)" <B> \
   && gh pr edit <PR number of B> --base <A> \
-  && git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B> \
-  && git update-ref refs/pushed/<B> "$(git rev-parse <B>)"
+  && git update-ref refs/pushed/<B> "$(git rev-parse <B>)" \
+  && { git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B> || { git update-ref -d refs/pushed/<B>; false; }; }
 # gh pr edit changes nothing when B already targets A; it stays in the chain for uniformity
 
 # rung C and the rest: same shape, P = B, old parent = backup/B, and so on
@@ -111,7 +112,7 @@ Then run workflow_dispatch (or the relevant check) on the leaf to confirm it wor
 
 ## Rolling back
 
-Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored.
+Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored. If a push was interrupted, the ref can name a tip the remote never received: when the lease push is refused and `origin/<b>` still equals `backup/<b>`, nothing was pushed for that rung, so delete its `refs/pushed` ref and restore only the local branch.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)

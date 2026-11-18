@@ -53,10 +53,10 @@ Read the whole file as context, but limit findings to what the PR changed. Probl
 How to judge each finding:
 
 - A file with status `A` is entirely inside the diff. `git show origin/$BASE:<file>` also fails for it, so do not use that to read old content.
-- For a file that existed at the fork point (status `M` or `R`), the added lines are the PR's. Count only added lines, not removed lines or the `+++` header (an added line whose content itself starts with `+` still counts). For a renamed file pass both the old and the new path, or the whole file shows as added:
+- For a file that existed at the fork point (status `M` or `R`), the added lines are the PR's. Count only added lines, not removed lines or the file header `+++ b/<path>` (an added line whose content itself starts with `+` still counts). For a renamed file pass both the old and the new path, or the whole file shows as added:
 
 ```bash
-git diff -M "origin/$BASE...HEAD" -U0 -- <old path> <new path> | grep -E '^\+' | grep -vE '^\+\+\+ '
+git diff -M "origin/$BASE...HEAD" -U0 -- <old path> <new path> | grep -E '^\+' | grep -vE '^\+\+\+ (b/|/dev/null)'
 ```
 
 - A finding about something present (a bad field name, a wrong type) is inside the diff only if its line is in the added lines.
@@ -75,12 +75,13 @@ buf lint
 # Format drift (--exit-code makes it CI-equivalent)
 buf format --diff --exit-code
 
-# Wire breaking check against the base from step 1
-buf breaking --against ".git#branch=origin/$BASE"
+# Wire breaking check against the merge base, not the base tip: a field added only on the base after the fork would otherwise be reported as deleted by this PR
+buf breaking --against ".git#branch=origin/$BASE,ref=$(git merge-base "origin/$BASE" HEAD)"
 ```
 
-- 0 breaking findings against the base means this PR alone is wire safe.
-- For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>"` to see the effect of the whole chain stacked on the default branch. A violation that appears only there is not automatically another PR's: check whether this PR's added lines are involved (for example it reuses a number or name that an earlier PR in the chain freed) before attributing it elsewhere, and report the rest separately from this PR's own.
+- 0 breaking findings against the merge base means this PR alone is wire safe.
+- `buf lint` and `buf format` check the whole module, not just the diff: apply the same inside-the-diff / pre-existing split of step 2 to their findings.
+- For a chain PR, also run `buf breaking --against ".git#branch=origin/<default branch>,ref=$(git merge-base "origin/<default branch>" HEAD)"` to see the effect of the whole chain stacked on the default branch. A violation that appears only there is not automatically another PR's: check whether this PR's added lines are involved (for example it reuses a number or name that an earlier PR in the chain freed) before attributing it elsewhere, and report the rest separately from this PR's own.
 - Missing `reserved`, deleted enum values and changed field types are detected mechanically by `buf breaking`. Cross-check them against the "Need for reserved" item below.
 
 ### 4. Review checklist
