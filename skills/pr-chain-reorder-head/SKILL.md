@@ -31,7 +31,7 @@ Run each step in one shell session. The recorded SHAs live in the `backup/<branc
 
 ```bash
 BASE=<base branch name, e.g. main>   # `gh pr view <PR number of A> --json baseRefName --jq .baseRefName`
-git fetch origin "$BASE" <X> <A> <B> <C> ... || echo "STOP: fetch failed"
+git fetch origin || echo "STOP: fetch failed"
 
 # Any output from these checks is a stop condition: fix it or ask the user before going on
 git status --porcelain
@@ -40,6 +40,13 @@ for b in <X> <A> <B> <C> ...; do
 done
 [ "$(gh pr view <PR number of X> --json baseRefName --jq .baseRefName)" = "$BASE" ] || echo "X has no PR targeting $BASE"
 git merge-base --is-ancestor "origin/$BASE" "origin/<X>" || echo "X is behind origin/$BASE"
+# Merge commits in a rung's own range would be flattened by its rebase
+prev="origin/$BASE"
+for b in <A> <B> <C> ...; do
+  m=$(git rev-list --merges "$prev..origin/${b}") || echo "STOP: rev-list failed for ${b}"
+  [ -z "$m" ] || echo "MERGE COMMITS in ${b}"
+  prev="origin/${b}"
+done
 
 # Record every branch's original tip (these refs are also the rollback source)
 for b in <X> <A> <B> <C> ...; do
@@ -59,19 +66,19 @@ For each rung R in order A, B, C, ..., with P the rung below it in the new chain
 # rung A: P = X, old parent = origin/$BASE
 # One chain per rung: a stopped rebase must not retarget the PR or push. --no-update-refs keeps rebase.updateRefs from moving backup/* or other rungs
 # The retarget comes before the push so the PR never shows X's commits as its own
-# refs/pushed/<A> is recorded before the push (the rollback lease) and deleted if the push fails, so an interruption never leaves a pushed tip unrecorded
+# refs/pushed/<A> is recorded before the push (the rollback lease) and kept if the push fails: Rolling back decides from the remote's actual tip
 git switch <A> \
   && git rebase --no-update-refs --onto <X> "origin/$BASE" <A> \
   && gh pr edit <PR number of A> --base <X> \
   && git update-ref refs/pushed/<A> "$(git rev-parse <A>)" \
-  && { git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A> || { git update-ref -d refs/pushed/<A>; false; }; }
+  && git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A>
 
 # rung B: P = A, old parent = backup/A
 git switch <B> \
   && git rebase --no-update-refs --onto <A> "$(git rev-parse backup/<A>)" <B> \
   && gh pr edit <PR number of B> --base <A> \
   && git update-ref refs/pushed/<B> "$(git rev-parse <B>)" \
-  && { git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B> || { git update-ref -d refs/pushed/<B>; false; }; }
+  && git push --force-with-lease="refs/heads/<B>:$(git rev-parse backup/<B>)" origin <B>
 # gh pr edit changes nothing when B already targets A; it stays in the chain for uniformity
 
 # rung C and the rest: same shape, P = B, old parent = backup/B, and so on
@@ -106,13 +113,21 @@ Then run workflow_dispatch (or the relevant check) on the leaf to confirm it wor
 ## Handling conflicts
 
 - A `git rebase` stops with a conflict: resolve it, run `git diff --check` (it must print nothing), then `git add <file>` and `git rebase --continue`. To give up on this rung, run `git rebase --abort`; that restores only the rung being rebased. Rungs already pushed stay rewritten and retargeted, and the rungs above them still carry the old history, so go to Rolling back or finish the cascade.
+- After `git rebase --continue` finishes the rebase, the rung is not done: the chain in step 1 stopped before its retarget, record and push. Run them now (shown for rung A; use the rung's own `<P>`, `<PR number>` and `backup/<R>`):
+
+  ```bash
+  gh pr edit <PR number of A> --base <X> \
+    && git update-ref refs/pushed/<A> "$(git rev-parse <A>)" \
+    && git push --force-with-lease="refs/heads/<A>:$(git rev-parse backup/<A>)" origin <A>
+  ```
+
 - A commit that is already present in the new parent (the same change duplicated across rungs): `git rebase --skip` is fine. `git rebase` detects duplicates by patch-id, but a commit whose content changed (rewritten by a conflict resolution) is not recognized as a duplicate. The sign that skip is OK is that an equivalent-content commit with a new SHA already exists in the rungs below.
 - modify/delete conflict: if the intent of the deleting commit is clear, `git rm <file>`; if the file should stay, `git add <file>`; then `git rebase --continue`.
 - Many unrelated commits are being re-applied on a rung: the old parent SHA is wrong. Abort, and check that `git rev-parse backup/<P>` is the tip the rung was originally based on.
 
 ## Rolling back
 
-Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored. If a push was interrupted, the ref can name a tip the remote never received: when the lease push is refused and `origin/<b>` still equals `backup/<b>`, nothing was pushed for that rung, so delete its `refs/pushed` ref and restore only the local branch.
+Put every branch, remote and local, back at its recorded tip and the root PR back on its original base. Each push is leased to the SHA step 1 pushed (`refs/pushed/<branch>`), not to `origin/<branch>`, so a push by someone else after step 1 is refused instead of overwritten. A rung without a `refs/pushed` ref was never pushed: its remote is untouched and only the local branch is restored. A push can fail or be interrupted after the ref was recorded, so the ref is never deleted for that reason; the remote's actual tip decides (`git ls-remote origin refs/heads/<b>`): equal to `backup/<b>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<b>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
@@ -120,7 +135,13 @@ git status --porcelain
 cur=$(git branch --show-current)
 failed=
 for b in <A> <B> <C> ...; do
-  { ! p=$(git rev-parse -q --verify "refs/pushed/${b}") || git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}"; } \
+  ok=
+  p=$(git rev-parse -q --verify "refs/pushed/${b}") || p=
+  remote=$(git ls-remote origin "refs/heads/${b}" | cut -f1)
+  if [ -z "$p" ] || [ "$remote" = "$(git rev-parse "backup/${b}")" ]; then ok=1
+  elif [ "$remote" = "$p" ]; then git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}" && ok=1
+  fi
+  [ -n "$ok" ] \
     && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
     || { echo "STOP: could not restore ${b}"; failed=1; break; }
 done

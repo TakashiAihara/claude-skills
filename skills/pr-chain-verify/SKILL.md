@@ -86,6 +86,14 @@ for BR in <every branch that gets a commit>; do
   # An existing backup is an earlier rollback point: stop and ask the user instead of overwriting it
   git branch --no-track "backup/${BR}" "origin/${BR}" || echo "STOP: backup/${BR} exists or cannot be created"
 done
+
+# Merge commits in a rung's own range would be flattened by its rebase: any MERGE COMMITS line is a stop condition
+prev="origin/${BASE}"
+for BR in <chain branches, root to leaf>; do
+  m=$(git rev-list --merges "${prev}..origin/${BR}") || echo "STOP: rev-list failed for ${BR}"
+  [ -z "$m" ] || echo "MERGE COMMITS in ${BR}: stop and ask"
+  prev="origin/${BR}"
+done
 ```
 
 ### 5. Commit to each PR in the chain (root -> leaf)
@@ -98,20 +106,29 @@ PARENT_BR="<parent-branch-name>"  # for the root PR: the base branch ($BASE)
 VFILE="<vfile>"                   # the path fixed in step 1
 
 # Each line is one chain: it stops at the first failing command, so the reset never runs on the wrong branch.
-# Safe only because step 4 found no uncommitted or unpushed work. Run exactly one of the two lines.
+# Safe only because step 4 found no uncommitted or unpushed work; each chain checks the tree is clean again right before its reset. Run exactly one of the two lines.
 # Root PR: pick up the latest base
-git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --no-update-refs "origin/${PARENT_BR}"
+git switch "$BR" && [ -z "$(git status --porcelain)" ] && git reset --hard "origin/${BR}" && git rebase --no-update-refs "origin/${PARENT_BR}"
 # Every other PR: replay only its own commits onto the parent's new tip; the parent's original tip marks where they start
-git switch "$BR" && git reset --hard "origin/${BR}" && git rebase --no-update-refs --onto "origin/${PARENT_BR}" "$(git rev-parse "backup/${PARENT_BR}")" "$BR"
+git switch "$BR" && [ -z "$(git status --porcelain)" ] && git reset --hard "origin/${BR}" && git rebase --no-update-refs --onto "origin/${PARENT_BR}" "$(git rev-parse "backup/${PARENT_BR}")" "$BR"
 
 # If the chain above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
 git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
   && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")" \
-  && { git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR" || { git update-ref -d "refs/pushed/${BR}"; false; }; }
-# refs/pushed is the rollback lease: recorded before the push, deleted if the push fails
+  && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR"
+# refs/pushed is the rollback lease: recorded before the push and kept if the push fails (Rolling back in pr-chain-reorder-head decides from the remote's tip)
 ```
 
 If `git rebase` stops on a conflict, stop the cascade: resolve it as described under "Handling conflicts" in the pr-chain-reorder-head skill (`git diff --check`, `git add`, `git rebase --continue`), or run `git rebase --abort` and ask the user. Nothing has been pushed for that rung yet.
+
+After `git rebase --continue` finishes the rebase, the rung is not done: the chain above stopped before the file, the commit and the push. Run them now:
+
+```bash
+# <write the verification file to "$VFILE">, then:
+git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
+  && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")" \
+  && git push --force-with-lease="refs/heads/${BR}:$(git rev-parse "backup/${BR}")" origin "$BR"
+```
 
 If different people own different rungs, use the owner-aware procedure in pr-chain-reorder-head instead of pushing every rung yourself.
 
@@ -123,11 +140,11 @@ No cascade rebase is needed, but these branches go through the step 4 pre-flight
 BR="<branch-name>"
 VFILE="<vfile>"
 
-git switch "$BR" && git reset --hard "origin/${BR}"
+git switch "$BR" && [ -z "$(git status --porcelain)" ] && git reset --hard "origin/${BR}"
 # If the line above failed, stop here. Otherwise <write the verification file to "$VFILE">, then:
 git add "$VFILE" && git commit -m "docs(test-results): add verification record for #<num> <short-title>" \
   && git update-ref "refs/pushed/${BR}" "$(git rev-parse "$BR")" \
-  && { git push origin "$BR" || { git update-ref -d "refs/pushed/${BR}"; false; }; }
+  && git push origin "$BR"
 ```
 
 ### 7. Verify chain integrity

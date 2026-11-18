@@ -29,6 +29,7 @@ rebase-safe [BASE_BRANCH]
 git status --porcelain
 BR=$(git branch --show-current)
 BASE=${BASE_BRANCH:-$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null)}
+BASE=${BASE#origin/}
 [ -n "$BASE" ] || { BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD) && BASE=${BASE#origin/}; }
 git fetch origin || echo "fetch failed" >&2
 ORIG=$(git rev-parse HEAD)
@@ -51,10 +52,10 @@ echo "BR=$BR BASE=$BASE ORIG=$ORIG REMOTE_SHA=$REMOTE_SHA"
 ### 2. Start the rebase
 
 ```bash
-git rebase --no-rerere-autoupdate --no-update-refs "origin/$BASE"
+git -c rerere.enabled=false rebase --no-rerere-autoupdate --no-update-refs "origin/$BASE"
 ```
 
-- `--no-rerere-autoupdate` keeps rerere from staging a source conflict on its own, and `--no-update-refs` keeps `rebase.updateRefs` from moving other branches such as `backup/*`
+- `-c rerere.enabled=false` and `--no-rerere-autoupdate` keep rerere from applying a recorded resolution or staging a source conflict on its own, and `--no-update-refs` keeps `rebase.updateRefs` from moving other branches such as `backup/*`
 - To give up at any point: `git rebase --abort`. After the rebase finished, `git reset --hard "backup/$BR"` restores the original (ask the user first)
 
 ### 3. Conflict resolution loop
@@ -84,7 +85,7 @@ resolve_doc() {
       123)
         git show ":2:$f" > "$t/ours" && git show ":1:$f" > "$t/base" && git show ":3:$f" > "$t/theirs" &&
           git merge-file --ours -p "$t/ours" "$t/base" "$t/theirs" > "$t/res" &&
-          ! grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' "$t/res" &&
+          [ -s "$t/res" ] && ! grep -n -e '^<<<<<<< ' -e '^>>>>>>> ' "$t/res" &&
           cat "$t/res" > "$f" && git add -- "$f" || rc=1 ;;
       13) git rm -q -- "$f" || rc=1 ;;
       12) git add -- "$f" || rc=1 ;;
@@ -103,6 +104,7 @@ resolve_doc() {
 - A symlink in any stage is never auto-resolved: writing the merged text through it would overwrite the link target
 - Stage `13`: the base deleted the file, so the deletion is taken
 - Stage `12`: the branch deleted a file the base modified, so the base version is kept
+- `git merge-file --ours` exits 0 when every conflict is resolved to our side (verified on git 2.53), so a non-zero exit is a real failure, and an empty result is rejected before anything is written
 - The marker check runs on the merged temp result, before anything is written to the file, so a hit leaves git's conflict state untouched and the function returns non-zero. It looks only for `<<<<<<< ` and `>>>>>>> `: `=======` alone is also a Markdown setext heading underline, and `git diff --check` flags the trailing double space of a Markdown hard line break
 - Record every file resolved this way. Its conflicting hunks of the branch's edits are dropped, which the final report must say
 

@@ -26,10 +26,13 @@ CURRENT=$(git branch --show-current)
 BASE_BRANCH=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null) || BASE_BRANCH=
 [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##')
 # Stop and ask the user if this prints STOP: detached HEAD, the base is unknown or cannot be fetched
-[ -n "$CURRENT" ] && [ -n "$BASE_BRANCH" ] && git fetch origin "$BASE_BRANCH" || echo "STOP: detached HEAD, base branch empty or fetch failed"
+[ -n "$CURRENT" ] && [ -n "$BASE_BRANCH" ] && git fetch origin || echo "STOP: detached HEAD, base branch empty or fetch failed"
 
 # The working tree must be clean; stop and ask the user if this prints anything
 git status --porcelain
+
+# Merge commits in the range the rebase below would rewrite: any output is a stop condition (the rebase would flatten them)
+git rev-list --merges "origin/$BASE_BRANCH..$CURRENT"
 
 # Backup of the branch being split
 git branch --no-track "backup/${CURRENT}-$(date +%Y%m%d%H%M%S)" "$CURRENT"
@@ -42,6 +45,8 @@ if ! git merge-base --is-ancestor "origin/$BASE_BRANCH" "$CURRENT"; then
   git switch --no-track -c "$SRC" "$CURRENT" && git rebase --no-update-refs "origin/$BASE_BRANCH" || echo "STOP: rebase of the copy failed: run git rebase --abort and ask the user"
 fi
 ```
+
+If that rebase stops on a conflict, resolve it and run `git rebase --continue`: nothing else of this step is left, so go on to step 2.
 
 When `SRC` is the rebased copy, tell the user: the parts carry the original change on top of the current base, not the original branch as it was.
 
@@ -89,9 +94,14 @@ Compare the per-part output with the plan. Then check each part builds and passe
 
 ### 4. Push and create a PR for each part
 
-Create the PRs in dependency order, then record every part's tip as a backup ref (the merge order below needs the original tips). If the original branch has a PR, start each body with `Part N of the split of #<original>`; otherwise name the source branch there.
+First record every part's tip as a backup ref (the merge order below needs the original tips), then create the PRs in dependency order. If the original branch has a PR, start each body with `Part N of the split of #<original>`; otherwise name the source branch there.
 
 ```bash
+# One backup per part. If a backup already exists, stop and ask the user: do not overwrite it
+for i in "${PARTS[@]}"; do
+  git branch --no-track "backup/${CURRENT}-part${i}" "${CURRENT}-part${i}" || echo "STOP: backup/${CURRENT}-part${i} exists or cannot be created"
+done
+
 # Part 1: base <- part1
 # Each push and its gh pr create form one chain: a rejected push must not open a PR for a stale remote branch
 git push -u origin "${CURRENT}-part1" \
@@ -105,10 +115,6 @@ git push -u origin "${CURRENT}-part2" \
   --title "<type>: <Part 2 title>" \
   --body "Part 2 of the split of #<original>. Depends on #<part1-number>. ..."
 
-# One backup per part. If a backup already exists, stop and ask the user: do not overwrite it
-for i in "${PARTS[@]}"; do
-  git branch --no-track "backup/${CURRENT}-part${i}" "${CURRENT}-part${i}" || echo "STOP: backup/${CURRENT}-part${i} exists or cannot be created"
-done
 ```
 
 If a part gets new commits after its backup exists, delete that backup deliberately (with the user's agreement) and create it again from the new tip.
@@ -131,28 +137,43 @@ If a part is squash-merged, the next part's branch still contains the original c
 PREV="${CURRENT}-part1"; NEXT="${CURRENT}-part2"
 # One chain: it stops at the first failing command. Replay only NEXT's own commits onto the base
 # (the old tip of PREV marks where they start), retarget, then push; the lease is pinned to NEXT's tip as it was before the rebase
-# refs/pushed/<NEXT> is recorded before the push (the rollback lease) and deleted if the push fails
-git fetch origin "$BASE_BRANCH" \
+# refs/pushed/<NEXT> is recorded before the push (the rollback lease) and kept if the push fails: Rolling back decides from the remote's actual tip
+git fetch origin \
   && git switch "$NEXT" \
   && git rebase --no-update-refs --onto "origin/$BASE_BRANCH" "$(git rev-parse "backup/${PREV}")" "$NEXT" \
   && gh pr edit <NEXT-pr-number> --base "$BASE_BRANCH" \
   && git update-ref "refs/pushed/${NEXT}" "$(git rev-parse "$NEXT")" \
-  && { git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT" || { git update-ref -d "refs/pushed/${NEXT}"; false; }; }
+  && git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT"
 ```
 
-If the rebase stops on a conflict, resolve it or run `git rebase --abort` and ask the user. Merge PR #<part2> once its checks pass, then repeat for the next part.
+If the rebase stops on a conflict, resolve it or run `git rebase --abort` and ask the user. After `git rebase --continue` finishes the rebase, the part is not done: the chain stopped before the retarget, record and push. Run them now:
+
+```bash
+gh pr edit <NEXT-pr-number> --base "$BASE_BRANCH" \
+  && git update-ref "refs/pushed/${NEXT}" "$(git rev-parse "$NEXT")" \
+  && git push --force-with-lease="refs/heads/${NEXT}:$(git rev-parse "backup/${NEXT}")" origin "$NEXT"
+```
+
+Merge PR #<part2> once its checks pass, then repeat for the next part.
 
 ## Rolling back a part
 
-Put one part back at its backup tip, remote and local, and its PR back on the previous part. The push is leased to the SHA recorded before the step 6 push (`refs/pushed/<part>`), not to `origin/<part>`, so a push by someone else afterwards is refused instead of overwritten. A part without that ref was never rebased or pushed by step 6: its remote is untouched and only the local branch is restored. The PR base is reverted only after the branch was restored.
+Put one part back at its backup tip, remote and local, and its PR back on the previous part. The push is leased to the SHA recorded before the step 6 push (`refs/pushed/<part>`), not to `origin/<part>`, so a push by someone else afterwards is refused instead of overwritten. A part without that ref was never rebased or pushed by step 6: its remote is untouched and only the local branch is restored. If the step 6 push failed or was interrupted the ref can name a tip the remote never received, so the remote's actual tip decides (`git ls-remote origin refs/heads/<part>`): equal to `backup/<part>` means nothing was pushed (restore only the local branch), equal to `refs/pushed/<part>` means it was pushed (lease push, then restore), anything else means someone else moved it, so stop. The PR base is reverted only after the branch was restored.
 
 ```bash
 # Any output from the next line is a stop condition (the reset below would discard it)
 git status --porcelain
 b="$NEXT"; cur=$(git branch --show-current)
-{ ! p=$(git rev-parse -q --verify "refs/pushed/${b}") || git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}"; } \
+ok=
+p=$(git rev-parse -q --verify "refs/pushed/${b}") || p=
+remote=$(git ls-remote origin "refs/heads/${b}" | cut -f1)
+if [ -z "$p" ] || [ "$remote" = "$(git rev-parse "backup/${b}")" ]; then ok=1
+elif [ "$remote" = "$p" ]; then git push --force-with-lease="refs/heads/${b}:${p}" origin "backup/${b}:refs/heads/${b}" && ok=1
+fi
+[ -n "$ok" ] \
   && if [ "$b" = "$cur" ]; then git reset --hard "backup/${b}"; else git branch -f "$b" "backup/${b}"; fi \
-  && gh pr edit <NEXT-pr-number> --base "$PREV"
+  && gh pr edit <NEXT-pr-number> --base "$PREV" \
+  || echo "STOP: could not restore ${b}"
 ```
 
 ## Choosing a splitting method
