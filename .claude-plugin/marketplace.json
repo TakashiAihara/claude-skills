@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "skills",
-      "description": "General-purpose skills: animated step slides, PR splitting and PR chain maintenance, safe rebase, branch cleanup, PICT combinations, PII audit and proto review.",
+      "description": "General-purpose skills: animated step slides, PR splitting and PR chain maintenance, safe rebase, branch cleanup, PICT combinations, PII audit, proto review and skill evals.",
       "source": "./",
       "category": "productivity"
     }
